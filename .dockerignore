@@ -1,0 +1,63 @@
+# ── Sentinel — .dockerignore ──
+# 排除不需要打包进镜像的文件，加速构建
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (keep .env out of images)
+.env
+.env.local
+.env.*.local
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Data
+*.db
+*.sqlite
+data/
+
+# Docs
+*.md
+docs/
+
+# Tests
+tests/
+backend/tests/
+
+# Logs
+*.log
+logs/

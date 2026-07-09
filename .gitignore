@@ -1,0 +1,59 @@
+# =============== 哨兵安全管理平台 ===============
+# 敏感配置（禁止提交到 Git）
+# =================================================
+
+# 密钥 & 环境变量
+.env
+.jwt_secret
+*.secret
+*.key
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 日志
+*.log
+logs/
+
+# 前端
+node_modules/
+dist/
+build/
+coverage/
+.nuxt/
+.next/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# 测试覆盖率
+htmlcov/
+.pytest_cache/
+.coverage

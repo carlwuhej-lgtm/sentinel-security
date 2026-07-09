@@ -1,0 +1,29 @@
+# Sentinel Security Scan (GitLab CI)
+#
+# 在仓库 Settings → CI/CD → Variables 配置：
+#   SENTINEL_URL  平台地址，如 https://sentinel.yourcompany.com
+#   SENTINEL_TOKEN 平台 Webhook Token
+#
+# 也可改用原生 push 触发（无需本文件）：
+#   项目 Settings → Webhooks → URL = https://<域名>/api/webhooks/gitlab
+#   Secret Token = 平台 Webhook Token，勾选 Push events
+
+stages:
+  - security
+
+sentinel-sast:
+  stage: security
+  image: curlimages/curl:latest
+  script:
+    - |
+      RESP=$(curl -s -X POST "$SENTINEL_URL/api/webhooks/scan?token=$SENTINEL_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"project_name\":\"$CI_PROJECT_NAME\",\"tool_type\":\"SAST\",\"ref\":\"$CI_COMMIT_REF_NAME\"}")
+      echo "$RESP"
+      echo "$RESP" | grep -q '"decision":"block"' && {
+        echo "安全门禁阻断：存在 Critical/High 级别漏洞，构建失败"
+        exit 1
+      }
+      echo "安全扫描通过（gate 非 block）"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'

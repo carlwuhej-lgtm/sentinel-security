@@ -1,0 +1,95 @@
+# ── Sentinel Security Platform ──
+# docker-compose up -d
+# 哨兵应用安全平台 — 一键部署
+
+version: "3.9"
+
+services:
+  # ═══ 后端 API 服务 ═══
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: sentinel-backend:latest
+    container_name: sentinel-backend
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "${BACKEND_PORT:-5000}:5000"
+    environment:
+      - SENTINEL_DEBUG=false
+      - SENTINEL_DB_PATH=/data/sentinel.db
+      # AI 配置（可选）
+      - SENTINEL_AI_API_KEY=${SENTINEL_AI_API_KEY:-}
+      - SENTINEL_AI_BASE=${SENTINEL_AI_BASE:-http://host.docker.internal:11434/v1}
+      - SENTINEL_AI_MODEL=${SENTINEL_AI_MODEL:-qwen3:0.6b}
+      - SENTINEL_AI_PROVIDER=${SENTINEL_AI_PROVIDER:-ollama}
+      # 扫描模式: real
+      - SENTINEL_SCANNER_MODE=${SENTINEL_SCANNER_MODE:-real}
+      # SMTP（可选）
+      - SENTINEL_SMTP_ENABLED=${SENTINEL_SMTP_ENABLED:-false}
+      - SENTINEL_SMTP_HOST=${SENTINEL_SMTP_HOST:-}
+      - SENTINEL_SMTP_PORT=${SENTINEL_SMTP_PORT:-587}
+      - SENTINEL_SMTP_USER=${SENTINEL_SMTP_USER:-}
+      - SENTINEL_SMTP_PASS=${SENTINEL_SMTP_PASS:-}
+      - SENTINEL_SMTP_FROM=${SENTINEL_SMTP_FROM:-}
+      # JWT 密钥
+      - SENTINEL_JWT_SECRET=${SENTINEL_JWT_SECRET:-change-me-in-production}
+    volumes:
+      - sentinel_data:/data
+      # 如需本地开发的热重载，取消下面注释：
+      # - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/auth/login", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"email":"health@check","password":"check"}']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - sentinel-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ═══ 前端 Web 服务 ═══
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_PORT:-5000}}
+    image: sentinel-frontend:latest
+    container_name: sentinel-frontend
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - sentinel-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sentinel_data:
+    name: sentinel_data
+
+networks:
+  sentinel-net:
+    name: sentinel-net
+    driver: bridge

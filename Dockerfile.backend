@@ -1,0 +1,44 @@
+# ── Sentinel Security Platform — Backend ──
+# 哨兵应用安全平台 - Python Flask 后端
+# Build: docker build -f Dockerfile.backend -t sentinel-backend .
+
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="Sentinel Security Backend"
+LABEL org.opencontainers.image.description="Sentinel AppSec Platform - Flask API Server"
+
+# ── System dependencies ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    # For semgrep (optional real scanning)
+    && rm -rf /var/lib/apt/lists/*
+
+# ── App user (non-root) ──
+RUN useradd -m -s /bin/bash sentinel && \
+    mkdir -p /app /data && \
+    chown -R sentinel:sentinel /app /data
+
+WORKDIR /app
+
+# ── Python dependencies ──
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    # Optional: uncomment for real SAST scanning
+    # pip install --no-cache-dir semgrep && \
+    pip install --no-cache-dir python-dotenv gunicorn
+
+# ── Application ──
+COPY backend/ .
+
+USER sentinel
+
+# ── Health check ──
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:5000/api/auth/login -X POST -H "Content-Type: application/json" -d '{"email":"health@check","password":"check"}' || exit 1
+
+# ── Runtime ──
+EXPOSE 5000
+ENV FLASK_APP=app.py
+ENV FLASK_ENV=production
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "app:create_app()"]

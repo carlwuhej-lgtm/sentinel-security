@@ -1,0 +1,84 @@
+rules:
+  # ─── 硬编码凭证 ───
+  # 此规则对前端表单空默认值和测试数据产生大量误报，已禁用。
+  # 若需启用，取消下面注释。
+  # - id: sentinel.hardcoded-password-in-dict
+  #   - pattern: |
+  #       {"password": "..."}
+  #   - pattern: |
+  #       'password': '...'
+  #   - pattern: |
+  #       "password": "..."
+  # message: |
+  #   Hardcoded plaintext password in source code.
+  #   CWE-798: Use of Hard-coded Credentials.
+  #   Fix: move credentials to environment variables or a secrets manager.
+  # severity: ERROR
+  # languages: [python, javascript, typescript]
+  # metadata:
+  #   cwe: "CWE-798"
+  #   owasp: "A07:2021"
+
+  # ─── 弱哈希（用于密码） ───
+  # 此规则对向后兼容代码产生误报（项目主哈希使用 PBKDF2），已禁用。
+  # 若需启用，取消下面注释。
+  # - id: sentinel.weak-hash-password
+  #   pattern-either:
+  #     - pattern: hashlib.sha256(...)
+  #     - pattern: hashlib.md5(...)
+  #     - pattern: hashlib.sha1(...)
+  #   message: |
+  #     Weak hashing algorithm (SHA256/MD5/SHA1) without salt.
+  #     CWE-916: Use of Password Hash With Insufficient Computational Effort.
+  #     Fix: use bcrypt, argon2id, or scrypt with appropriate work factors.
+  #   severity: WARNING
+  #   languages: [python]
+  #   metadata:
+  #     cwe: "CWE-916"
+
+  # ─── 不安全反序列化 ───
+  - id: sentinel.unsafe-deserialization
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: yaml.load(...)
+      - pattern: marshal.loads(...)
+    message: |
+      Unsafe deserialization — pickle/yaml.load/marshal on untrusted data can
+      lead to remote code execution. CWE-502.
+      Fix: use yaml.safe_load() or json.loads() instead.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      cwe: "CWE-502"
+
+  # ─── 命令注入（高危函数） ───
+  - id: sentinel.command-injection
+    pattern-either:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+    message: |
+      os.system() / os.popen() with unsanitized input enables command injection.
+      CWE-78: OS Command Injection.
+      Fix: use subprocess.run() with shell=False and a static argument list.
+    severity: WARNING
+    languages: [python]
+    metadata:
+      cwe: "CWE-78"
+
+  # ─── 路径遍历 ───
+  - id: sentinel.path-traversal
+    patterns:
+      - pattern: |
+          open($PATH, ...)
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: .*\..*
+    message: |
+      File opened with a possibly user-controlled path.
+      CWE-22: Path Traversal.
+      Fix: validate and sanitize paths before file operations.
+    severity: WARNING
+    languages: [python]
+    metadata:
+      cwe: "CWE-22"
