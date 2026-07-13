@@ -2,17 +2,21 @@ import json
 import sqlite3
 import os
 import re
+from datetime import datetime
 from flask import Blueprint, request, jsonify, g, current_app, Response, stream_with_context
 
 ai_bp = Blueprint('ai', __name__)
 
 # Read AI config from config.py (which loads .env)
-from config import AI_CONFIG as _cfg, DATABASE_PATH
+from config import AI_CONFIG as _cfg, DATABASE_PATH, _AI_PROVIDER_ENV, _AI_HAS_KEY
 AI_API_KEY = _cfg['api_key']
 AI_API_BASE = _cfg['api_base']
 AI_MODEL = _cfg['model']
 AI_PROVIDER = os.environ.get('SENTINEL_AI_PROVIDER', 'openai')
 AI_ENABLED = _cfg['enabled']
+
+# 多供应商支持：DB 优先，env 兜底（保证本地 Ollama 始终可用）
+from services.crypto_service import encrypt, decrypt
 
 def get_db():
     if '_db' not in g:
@@ -25,16 +29,83 @@ from routes.auth import login_required, admin_required
 
 
 # ---------------------------------------------------------------------------
+# 多供应商配置（DB 优先，env 兜底；本地 Ollama 始终保留）
+# ---------------------------------------------------------------------------
+
+def _ensure_ai_providers(db):
+    """确保 ai_providers 表存在，首次运行用当前 env 配置种子一条 Ollama/本地供应商。"""
+    db.execute(
+        '''CREATE TABLE IF NOT EXISTS ai_providers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            provider_type TEXT NOT NULL DEFAULT 'openai',
+            api_base TEXT NOT NULL,
+            model TEXT NOT NULL,
+            api_key TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )'''
+    )
+    db.commit()
+    row = db.execute('SELECT COUNT(*) AS c FROM ai_providers').fetchone()
+    if row['c'] == 0:
+        now = datetime.now().isoformat()
+        ptype = 'ollama' if _AI_PROVIDER_ENV in ('ollama', 'local') else 'openai'
+        db.execute(
+            '''INSERT INTO ai_providers (name, provider_type, api_base, model, api_key, is_active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?)''',
+            ('Ollama 本地模型', ptype, AI_API_BASE, AI_MODEL, '', now, now)
+        )
+        db.commit()
+
+
+def get_active_ai_config() -> dict:
+    """返回当前激活的 AI 供应商配置。
+
+    - 优先读 DB 中 is_active=1 的记录（运行时切换，无需重启）；
+    - DB 无记录/未激活时回退到 env 配置，保证本地 Ollama 始终可用。
+    """
+    try:
+        db = get_db()
+        _ensure_ai_providers(db)
+        row = db.execute(
+            'SELECT provider_type, api_base, model, api_key FROM ai_providers WHERE is_active=1 ORDER BY id LIMIT 1'
+        ).fetchone()
+        if row:
+            raw_key = row['api_key'] or ''
+            key = decrypt(raw_key) if raw_key.startswith('aes256:') else raw_key
+            return {
+                'enabled': bool(row['api_base'] and row['model']),
+                'provider': row['provider_type'],
+                'api_base': row['api_base'],
+                'model': row['model'],
+                'api_key': key,
+            }
+    except Exception:
+        pass
+    # 兜底：env 配置
+    is_local = _AI_PROVIDER_ENV in ('ollama', 'local')
+    return {
+        'enabled': AI_ENABLED,
+        'provider': 'ollama' if is_local else AI_PROVIDER,
+        'api_base': AI_API_BASE,
+        'model': AI_MODEL,
+        'api_key': '' if is_local else AI_API_KEY,
+    }
+
+
+# ---------------------------------------------------------------------------
 # AI helper
 # ---------------------------------------------------------------------------
 
 def call_ai(system_prompt: str, user_prompt: str, stream: bool = False, timeout: int = 120) -> str:
     """Call AI API (OpenAI / Ollama / compatible).
 
-    Args:
-        timeout: 单次请求最大等待秒数。批量/预生成场景应传入较小值，避免长时间阻塞。
+    自动读取当前激活的供应商配置（DB 优先），支持运行时切换、无需重启。
     """
-    if not AI_ENABLED:
+    cfg = get_active_ai_config()
+    if not cfg['enabled']:
         raise ValueError("AI not configured")
 
     def _clean_response(text: str) -> str:
@@ -45,7 +116,7 @@ def call_ai(system_prompt: str, user_prompt: str, stream: bool = False, timeout:
     try:
         import urllib.request
         data = json.dumps({
-            "model": AI_MODEL,
+            "model": cfg['model'],
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -54,11 +125,11 @@ def call_ai(system_prompt: str, user_prompt: str, stream: bool = False, timeout:
             "max_tokens": 4096,
             "stream": False
         }).encode()
-        url = f"{AI_API_BASE}/chat/completions"
+        url = f"{cfg['api_base']}/chat/completions"
         headers = {"Content-Type": "application/json"}
         # Ollama doesn't need auth; only add Authorization for non-Ollama providers
-        if AI_PROVIDER != 'ollama':
-            headers["Authorization"] = f"Bearer {AI_API_KEY}"
+        if cfg['provider'] != 'ollama':
+            headers["Authorization"] = f"Bearer {cfg['api_key']}"
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         resp = urllib.request.urlopen(req, timeout=timeout)
         result = json.loads(resp.read())
@@ -69,12 +140,18 @@ def call_ai(system_prompt: str, user_prompt: str, stream: bool = False, timeout:
 
 
 def check_ai_health() -> bool:
-    """Quick health check — returns True if AI service is reachable within 3s."""
-    if not AI_ENABLED:
+    """Quick health check — returns True if active AI service is reachable within 3s."""
+    cfg = get_active_ai_config()
+    if not cfg['enabled']:
         return False
     try:
         import urllib.request
-        url = AI_API_BASE if AI_PROVIDER != 'ollama' else f"{AI_API_BASE}/api/tags"
+        if cfg['provider'] == 'ollama':
+            # Ollama /api/tags 在根路径（/v1 仅用于 OpenAI 兼容接口）
+            root = cfg['api_base'].replace('/v1', '').rstrip('/')
+            url = f"{root}/api/tags"
+        else:
+            url = cfg['api_base']
         req = urllib.request.Request(url, method="GET")
         urllib.request.urlopen(req, timeout=3)
         return True
@@ -1391,6 +1468,187 @@ def clear_history():
 
 
 # ---------------------------------------------------------------------------
+# 3.5 多供应商管理（CRUD / 激活 / 测试）
+# ---------------------------------------------------------------------------
+
+def _serialize_provider(row) -> dict:
+    raw_key = row['api_key'] or ''
+    masked = '****' if raw_key else ''
+    return {
+        'id': row['id'],
+        'name': row['name'],
+        'provider_type': row['provider_type'],
+        'api_base': row['api_base'],
+        'model': row['model'],
+        'api_key': masked,
+        'is_active': bool(row['is_active']),
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at'],
+    }
+
+
+@ai_bp.route('/providers', methods=['GET'])
+@login_required
+def list_providers():
+    """GET /api/ai/providers — 列出所有已配置的 AI 供应商（api_key 掩码）。"""
+    db = get_db()
+    _ensure_ai_providers(db)
+    rows = db.execute('SELECT * FROM ai_providers ORDER BY is_active DESC, id').fetchall()
+    return jsonify([_serialize_provider(r) for r in rows])
+
+
+@ai_bp.route('/providers', methods=['POST'])
+@admin_required
+def create_provider():
+    """POST /api/ai/providers — 新增供应商。首个供应商自动激活。"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get('name') or '').strip()
+    ptype = (data.get('provider_type') or 'openai').strip().lower()
+    api_base = (data.get('api_base') or '').strip()
+    model = (data.get('model') or '').strip()
+    api_key = (data.get('api_key') or '').strip()
+    if not name or not api_base or not model:
+        return jsonify({'error': '名称、API 地址、模型名称均为必填'}), 400
+    if ptype not in ('ollama', 'openai', 'azure'):
+        return jsonify({'error': 'provider_type 仅支持 ollama / openai / azure'}), 400
+
+    now = datetime.now().isoformat()
+    stored_key = encrypt(api_key) if api_key else ''
+    db = get_db()
+    _ensure_ai_providers(db)
+    count = db.execute('SELECT COUNT(*) AS c FROM ai_providers').fetchone()['c']
+    is_active = 1 if count == 0 else 0
+    db.execute(
+        '''INSERT INTO ai_providers (name, provider_type, api_base, model, api_key, is_active, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+        (name, ptype, api_base, model, stored_key, is_active, now, now)
+    )
+    db.commit()
+    new_id = db.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+    return jsonify({'message': '供应商已添加', 'id': new_id, 'is_active': bool(is_active)}), 201
+
+
+@ai_bp.route('/providers/<int:pid>', methods=['PUT'])
+@admin_required
+def update_provider(pid: int):
+    """PUT /api/ai/providers/<id> — 更新供应商配置。"""
+    data = request.get_json(force=True, silent=True) or {}
+    db = get_db()
+    _ensure_ai_providers(db)
+    row = db.execute('SELECT * FROM ai_providers WHERE id=?', (pid,)).fetchone()
+    if not row:
+        return jsonify({'error': '供应商不存在'}), 404
+
+    name = (data.get('name') or row['name']).strip()
+    ptype = (data.get('provider_type') or row['provider_type']).strip().lower()
+    api_base = (data.get('api_base') or row['api_base']).strip()
+    model = (data.get('model') or row['model']).strip()
+    raw_key = (data.get('api_key') or '').strip()
+    if not name or not api_base or not model:
+        return jsonify({'error': '名称、API 地址、模型名称均为必填'}), 400
+    if ptype not in ('ollama', 'openai', 'azure'):
+        return jsonify({'error': 'provider_type 仅支持 ollama / openai / azure'}), 400
+
+    # api_key 处理：传 '****' 或不传则保留原值；传新值则加密存储
+    if raw_key and raw_key != '****':
+        stored_key = encrypt(raw_key)
+    else:
+        stored_key = row['api_key']
+
+    now = datetime.now().isoformat()
+    db.execute(
+        '''UPDATE ai_providers SET name=?, provider_type=?, api_base=?, model=?, api_key=?, updated_at=?
+           WHERE id=?''',
+        (name, ptype, api_base, model, stored_key, now, pid)
+    )
+    db.commit()
+    return jsonify({'message': '供应商已更新'})
+
+
+@ai_bp.route('/providers/<int:pid>', methods=['DELETE'])
+@admin_required
+def delete_provider(pid: int):
+    """DELETE /api/ai/providers/<id> — 删除供应商。"""
+    db = get_db()
+    _ensure_ai_providers(db)
+    row = db.execute('SELECT * FROM ai_providers WHERE id=?', (pid,)).fetchone()
+    if not row:
+        return jsonify({'error': '供应商不存在'}), 404
+    db.execute('DELETE FROM ai_providers WHERE id=?', (pid,))
+    db.commit()
+    return jsonify({'message': '供应商已删除'})
+
+
+@ai_bp.route('/providers/<int:pid>/activate', methods=['POST'])
+@admin_required
+def activate_provider(pid: int):
+    """POST /api/ai/providers/<id>/activate — 设为激活供应商（运行时切换，无需重启）。"""
+    db = get_db()
+    _ensure_ai_providers(db)
+    row = db.execute('SELECT id FROM ai_providers WHERE id=?', (pid,)).fetchone()
+    if not row:
+        return jsonify({'error': '供应商不存在'}), 404
+    db.execute('UPDATE ai_providers SET is_active=0')
+    db.execute('UPDATE ai_providers SET is_active=1 WHERE id=?', (pid,))
+    db.commit()
+    return jsonify({'message': '已切换为激活供应商', 'active_id': pid})
+
+
+@ai_bp.route('/providers/<int:pid>/test', methods=['POST'])
+@login_required
+def test_provider(pid: int):
+    """POST /api/ai/providers/<id>/test — 临时用该供应商做一次极小调用，验证连通性与鉴权。"""
+    db = get_db()
+    _ensure_ai_providers(db)
+    row = db.execute('SELECT provider_type, api_base, model, api_key FROM ai_providers WHERE id=?', (pid,)).fetchone()
+    if not row:
+        return jsonify({'error': '供应商不存在'}), 404
+
+    raw_key = row['api_key'] or ''
+    key = decrypt(raw_key) if raw_key.startswith('aes256:') else raw_key
+    ptype = row['provider_type']
+    base = row['api_base']
+    model = row['model']
+    reachable = False
+    reply_ok = False
+    detail = ''
+    try:
+        import urllib.request
+        if ptype == 'ollama':
+            root = base.replace('/v1', '').rstrip('/')
+            urllib.request.urlopen(urllib.request.Request(f"{root}/api/tags"), timeout=5)
+        else:
+            urllib.request.urlopen(urllib.request.Request(base, method='GET'), timeout=5)
+        reachable = True
+    except Exception as e:
+        detail = f'连接失败: {str(e)}'
+
+    if reachable:
+        try:
+            data = json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "temperature": 0,
+                "max_tokens": 8,
+                "stream": False,
+            }).encode()
+            url = f"{base}/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            if ptype != 'ollama':
+                headers["Authorization"] = f"Bearer {key}"
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            resp = urllib.request.urlopen(req, timeout=30)
+            result = json.loads(resp.read())
+            content = result["choices"][0]["message"]["content"]
+            reply_ok = bool(content and content.strip())
+            detail = f'模型响应: {content.strip()[:60]}'
+        except Exception as e:
+            detail = f'连接可达但调用失败(可能是 Key/模型名错误): {str(e)}'
+
+    return jsonify({'reachable': reachable, 'reply_ok': reply_ok, 'detail': detail})
+
+
+# ---------------------------------------------------------------------------
 # 4. GET /health — AI 服务健康检查
 # ---------------------------------------------------------------------------
 
@@ -1414,34 +1672,38 @@ def health():
 @ai_bp.route('/status', methods=['GET'])
 @login_required
 def status():
-    # Derive provider name from base URL
-    provider = "OpenAI"
-    if AI_PROVIDER == 'ollama':
+    cfg = get_active_ai_config()
+    base = (cfg['api_base'] or '').lower()
+    ptype = cfg['provider']
+    # Derive provider display name
+    if ptype == 'ollama':
         provider = "Ollama (本地)"
-    elif "azure" in AI_API_BASE.lower():
+    elif "azure" in base:
         provider = "Azure OpenAI"
-    elif "deepseek" in AI_API_BASE.lower():
+    elif "deepseek" in base:
         provider = "DeepSeek"
-    elif "moonshot" in AI_API_BASE.lower() or "kimi" in AI_API_BASE.lower():
+    elif "moonshot" in base or "kimi" in base:
         provider = "Moonshot"
-    elif "qwen" in AI_API_BASE.lower() or "dashscope" in AI_API_BASE.lower():
+    elif "qwen" in base or "dashscope" in base:
         provider = "通义千问"
-    elif "zhipu" in AI_API_BASE.lower() or "bigmodel" in AI_API_BASE.lower():
+    elif "zhipu" in base or "bigmodel" in base:
         provider = "智谱 GLM"
-    elif "baichuan" in AI_API_BASE.lower():
+    elif "baichuan" in base:
         provider = "百川"
-    elif "minimax" in AI_API_BASE.lower():
+    elif "minimax" in base:
         provider = "MiniMax"
-    elif "localhost" in AI_API_BASE.lower() or "127.0.0.1" in AI_API_BASE.lower():
+    elif "localhost" in base or "127.0.0.1" in base:
         provider = "本地模型"
+    else:
+        provider = "OpenAI 兼容"
 
     # Check actual reachability (cached result)
     reachable = check_ai_health()
 
     return jsonify({
-        "enabled": AI_ENABLED,
-        "model": AI_MODEL,
+        "enabled": cfg['enabled'],
+        "model": cfg['model'],
         "provider": provider,
         "reachable": reachable,
-        "api_base": AI_API_BASE,
+        "api_base": cfg['api_base'],
     })

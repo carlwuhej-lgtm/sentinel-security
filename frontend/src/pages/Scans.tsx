@@ -61,6 +61,19 @@ const statusLabel: Record<string, string> = {
 
 const PAGE_SIZE = 10
 
+// 生成带省略号的页码窗口，避免页数过多时按钮排成一长条
+function getPageWindow(current: number, total: number): (number | string)[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages: (number | string)[] = [1]
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+  if (start > 2) pages.push('...')
+  for (let p = start; p <= end; p++) pages.push(p)
+  if (end < total - 1) pages.push('...')
+  pages.push(total)
+  return pages
+}
+
 const severityBadge: Record<string, string> = {
   CRITICAL: 'badge-critical',
   HIGH: 'badge-high',
@@ -125,6 +138,8 @@ export default function Scans() {
   const [showCiCd, setShowCiCd] = useState(false)
   const [webhookToken, setWebhookToken] = useState('')
   const [page, setPage] = useState(1)
+  const [scanTotal, setScanTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
 
   // ─── 定时扫描调度 ───
   interface ScanSchedule {
@@ -184,7 +199,7 @@ export default function Scans() {
 
   useEffect(() => {
     loadScans()
-  }, [filterProjectId])
+  }, [filterProjectId, page])
 
   useEffect(() => {
     if (hasRunningScans) {
@@ -283,9 +298,12 @@ export default function Scans() {
   const loadScans = useCallback(async () => {
     setLoading(true)
     try {
-      const params = filterProjectId ? { project_id: filterProjectId } : {}
+      const params: Record<string, any> = { page, per_page: PAGE_SIZE }
+      if (filterProjectId) params.project_id = filterProjectId
       const res = await api.get('/scans', { params })
       const items: Scan[] = res.data?.items || []
+      setScanTotal(res.data?.total ?? items.length)
+      setTotalPages(Math.max(1, res.data?.pages ?? 1))
 
       // 检测状态跃迁：running/pending → completed/failed 时弹提示
       const prev = statusesRef.current
@@ -312,10 +330,9 @@ export default function Scans() {
     } finally {
       setLoading(false)
     }
-  }, [filterProjectId, showToast])
+  }, [filterProjectId, page, showToast])
 
-  const totalPages = Math.max(1, Math.ceil(scans.length / PAGE_SIZE))
-  const pagedScans = scans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const pagedScans = scans  // 服务端已分页，当前页数据直接用
 
   // Reset page when filter changes
   useEffect(() => { setPage(1) }, [filterProjectId])
@@ -558,21 +575,25 @@ export default function Scans() {
       )}
 
       {/* Pagination */}
-      {scans.length > PAGE_SIZE && (
+      {scanTotal > PAGE_SIZE && (
         <div className="flex items-center justify-between pt-3 text-xs text-slate-400">
-          <span>共 {scans.length} 条</span>
+          <span>共 {scanTotal} 条 · 第 {page} / {totalPages} 页</span>
           <div className="flex items-center gap-1">
             <button disabled={page <= 1} onClick={() => setPage(page - 1)}
               className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">
               上一页
             </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <button key={p} onClick={() => setPage(p)}
-                className={`px-2.5 py-1 rounded text-xs ${p === page
-                  ? 'bg-primary-600 text-white' : 'bg-surface-800 border border-slate-700 hover:border-slate-600'}`}>
-                {p}
-              </button>
-            ))}
+            {getPageWindow(page, totalPages).map((p, i) =>
+              p === '...' ? (
+                <span key={`e${i}`} className="px-1.5 text-slate-600">…</span>
+              ) : (
+                <button key={p} onClick={() => setPage(p as number)}
+                  className={`px-2.5 py-1 rounded text-xs ${p === page
+                    ? 'bg-primary-600 text-white' : 'bg-surface-800 border border-slate-700 hover:border-slate-600'}`}>
+                  {p}
+                </button>
+              )
+            )}
             <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}
               className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">
               下一页

@@ -13,9 +13,34 @@ interface Vulnerability {
   created_at: string
 }
 
+interface AnalysisSections {
+  vulnerability_type?: string
+  severity_assessment?: {
+    original_level?: string
+    ai_risk_score?: number
+    recommendation?: string
+    recommendation_color?: string
+  }
+  attack_path?: {
+    summary?: string
+    steps?: string[]
+  }
+  exploitation_difficulty?: string
+  business_impact?: {
+    summary?: string
+    areas?: { name: string; level: string; level_value: number; detail: string }[]
+  }
+  mitigation?: {
+    priority?: string
+    recommendation?: string
+  }
+}
+
 interface AnalysisResult {
   risk_score: number
   analysis: string
+  analysis_sections?: AnalysisSections
+  ai_model?: string
   simulated?: boolean
 }
 
@@ -166,6 +191,121 @@ function processInlineMarkdown(text: string): JSX.Element {
   )
 }
 
+function impactLevelColor(level: string): string {
+  if (level === '高') return '#ef4444'
+  if (level === '中') return '#f59e0b'
+  return '#22c55e'
+}
+
+function RiskBar({ value, color }: { value: number; color: string }) {
+  const pct = Math.max(0, Math.min(100, value))
+  return (
+    <div className="h-1.5 w-full rounded-full bg-slate-700/50 overflow-hidden">
+      <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+    </div>
+  )
+}
+
+function SectionCard({ title, children, icon }: { title: string; children: React.ReactNode; icon?: string }) {
+  return (
+    <div className="rounded-lg border border-surface-border/60 bg-slate-800/40 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        {icon && <span className="text-base leading-none">{icon}</span>}
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h4>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function AnalysisSectionView({ sections }: { sections: AnalysisSections }) {
+  if (!sections) return null
+  const sa = sections.severity_assessment
+  const ap = sections.attack_path
+  const bi = sections.business_impact
+  const mit = sections.mitigation
+  return (
+    <div className="space-y-4">
+      {sections.vulnerability_type && (
+        <div className="text-sm font-semibold text-white">{sections.vulnerability_type}</div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <SectionCard title="严重性评估" icon="⚠️">
+          <div className="flex items-center gap-3 mb-2">
+            {sa?.original_level && (
+              <span className={`badge ${severityBadge[sa.original_level] || 'badge-info'}`}>{sa.original_level}</span>
+            )}
+            {sa?.ai_risk_score !== undefined && (
+              <>
+                <span className="text-2xl font-bold" style={{ color: riskScoreColor(sa.ai_risk_score) }}>{sa.ai_risk_score}</span>
+                <span className="text-xs text-slate-500">/ 100</span>
+              </>
+            )}
+          </div>
+          {sa?.recommendation && (
+            <span
+              className="inline-block text-xs px-2.5 py-1 rounded-md font-medium"
+              style={{
+                color: sa.recommendation_color || '#f59e0b',
+                backgroundColor: `${sa.recommendation_color || '#f59e0b'}1a`,
+                border: `1px solid ${sa.recommendation_color || '#f59e0b'}40`,
+              }}
+            >
+              {sa.recommendation}
+            </span>
+          )}
+        </SectionCard>
+
+        <SectionCard title="利用难度" icon="🔓">
+          <p className="text-sm text-slate-300 leading-relaxed">{sections.exploitation_difficulty || '—'}</p>
+        </SectionCard>
+
+        <SectionCard title="攻击路径" icon="🎯">
+          {ap?.summary && <p className="text-sm text-slate-300 leading-relaxed mb-2">{ap.summary}</p>}
+          {ap?.steps && ap.steps.length > 0 && (
+            <ol className="text-sm text-slate-300 space-y-1 ml-4 list-decimal">
+              {ap.steps.map((s, i) => <li key={i}>{s}</li>)}
+            </ol>
+          )}
+        </SectionCard>
+
+        <SectionCard title="业务影响" icon="💥">
+          {bi?.summary && <p className="text-sm text-slate-300 leading-relaxed mb-3">{bi.summary}</p>}
+          {bi?.areas && bi.areas.length > 0 && (
+            <div className="space-y-2.5">
+              {bi.areas.map((a, i) => {
+                const c = impactLevelColor(a.level)
+                return (
+                  <div key={i}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-slate-300">{a.name}</span>
+                      <span className="text-xs font-medium" style={{ color: c }}>{a.level}</span>
+                    </div>
+                    <RiskBar value={a.level_value} color={c} />
+                    <p className="text-[11px] text-slate-500 mt-1 leading-snug">{a.detail}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      {mit && (mit.priority || mit.recommendation) && (
+        <SectionCard title="修复优先级建议" icon="🛡️">
+          <div className="flex items-start gap-3">
+            {mit.priority && (
+              <span className="shrink-0 text-xs px-2.5 py-1 rounded-md font-medium bg-brand-500/15 text-brand-400 border border-brand-500/30">{mit.priority}</span>
+            )}
+            {mit.recommendation && <p className="text-sm text-slate-300 leading-relaxed">{mit.recommendation}</p>}
+          </div>
+        </SectionCard>
+      )}
+    </div>
+  )
+}
+
 export default function AIAnalysis() {
   const [mode, setMode] = useState<'analyze' | 'chat'>('analyze')
   const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([])
@@ -178,6 +318,9 @@ export default function AIAnalysis() {
   const [aiEnabled, setAiEnabled] = useState(false)
   const [aiStatusChecked, setAiStatusChecked] = useState(false)
   const [aiReachable, setAiReachable] = useState(false)
+  const [aiModel, setAiModel] = useState('')
+  const [aiProvider, setAiProvider] = useState('')
+  const [aiApiBase, setAiApiBase] = useState('')
   const [attachedVulnId, setAttachedVulnId] = useState<number | null>(null)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -231,9 +374,15 @@ export default function AIAnalysis() {
       const res = await api.get('/ai/status')
       setAiEnabled(res.data?.enabled ?? false)
       setAiReachable(res.data?.reachable ?? false)
+      setAiModel(res.data?.model ?? '')
+      setAiProvider(res.data?.provider ?? '')
+      setAiApiBase(res.data?.api_base ?? '')
     } catch {
       setAiEnabled(false)
       setAiReachable(false)
+      setAiModel('')
+      setAiProvider('')
+      setAiApiBase('')
     } finally {
       setAiStatusChecked(true)
     }
@@ -362,6 +511,37 @@ export default function AIAnalysis() {
         </div>
       )}
 
+      {/* AI 能力概览 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="card p-4">
+          <div className="text-xs text-slate-500 mb-1.5">AI 模型</div>
+          <div className="text-sm font-semibold text-white truncate" title={aiModel}>{aiModel || (aiStatusChecked ? '未配置' : '检测中…')}</div>
+          <div className="text-[11px] text-slate-500 mt-0.5 truncate">{aiProvider || '—'}</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-xs text-slate-500 mb-1.5">服务节点</div>
+          <div className="text-sm font-semibold text-white truncate" title={aiApiBase}>
+            {aiApiBase
+              ? (() => { try { const u = new URL(aiApiBase); return `${u.hostname}:${u.port || '—'}` } catch { return aiApiBase } })()
+              : (aiStatusChecked ? '—' : '检测中…')}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">推理端点</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-xs text-slate-500 mb-1.5">连接状态</div>
+          <div className="flex items-center gap-2">
+            <span className={`inline-block w-2 h-2 rounded-full ${aiReachable ? 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.6)]' : aiEnabled ? 'bg-amber-400' : 'bg-slate-500'}`} />
+            <span className="text-sm font-semibold text-white">{aiReachable ? '已连通' : aiEnabled ? '未连通' : '未配置'}</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">{aiReachable ? '实时推理可用' : '本地规则引擎'}</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-xs text-slate-500 mb-1.5">可分析漏洞</div>
+          <div className="text-sm font-semibold text-white">{vulnerabilities.length}</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">条待评估</div>
+        </div>
+      </div>
+
       {/* Mode selector */}
       <div className="flex items-center gap-1 mb-6 border-b border-surface-border/50">
         <button
@@ -441,13 +621,15 @@ export default function AIAnalysis() {
           {analysisResult && (
             <div className="card p-5 mb-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-slate-300">分析结果</h2>
-                {analysisResult.simulated !== undefined && analysisResult.simulated && (
-                  <span className="badge badge-info text-xs">本地分析</span>
-                )}
-                {isSimulated && analysisResult.simulated === undefined && (
-                  <span className="badge badge-info text-xs">本地分析</span>
-                )}
+                <h2 className="text-sm font-semibold text-slate-300">智能分析结果</h2>
+                <div className="flex items-center gap-2">
+                  {analysisResult.ai_model && analysisResult.ai_model !== 'simulated' && (
+                    <span className="badge badge-info text-xs font-mono">{analysisResult.ai_model}</span>
+                  )}
+                  {(analysisResult.simulated === true || (isSimulated && analysisResult.simulated === undefined)) && (
+                    <span className="badge badge-info text-xs">本地分析</span>
+                  )}
+                </div>
               </div>
 
               {/* Risk score */}
@@ -473,10 +655,21 @@ export default function AIAnalysis() {
                 </div>
               </div>
 
-              {/* AI Analysis content */}
-              <div className="border-t border-surface-border/50 pt-4">
-                <h3 className="text-sm font-medium text-slate-400 mb-3">AI 分析详情</h3>
-                <div className="text-sm">{renderMarkdown(analysisResult.analysis)}</div>
+              {/* 结构化分析维度 */}
+              {analysisResult.analysis_sections && (
+                <div className="border-t border-surface-border/50 pt-4">
+                  <AnalysisSectionView sections={analysisResult.analysis_sections} />
+                </div>
+              )}
+
+              {/* 完整 AI 分析原文（可折叠） */}
+              <div className="border-t border-surface-border/50 pt-4 mt-4">
+                <details>
+                  <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200 select-none">
+                    ▾ 查看完整 AI 分析原文
+                  </summary>
+                  <div className="text-sm mt-3">{renderMarkdown(analysisResult.analysis)}</div>
+                </details>
               </div>
 
               {/* Fix suggestion button */}
@@ -612,14 +805,25 @@ export default function AIAnalysis() {
           <div className="flex-1 overflow-y-auto mb-4 space-y-4 pr-1">
             {chatMessages.length === 0 && (
               <div className="flex items-center justify-center h-full">
-                <div className="text-center">
+                <div className="text-center max-w-lg">
                   <div className="text-slate-500 text-sm mb-1">
                     {aiReachable
                       ? 'AI 安全顾问 — 请描述您的安全问题'
                       : '本地规则引擎 — 可解答常见安全问题（AI 服务未连通）'}
                   </div>
-                  <div className="text-slate-600 text-xs">
+                  <div className="text-slate-600 text-xs mb-5">
                     支持: 漏洞分析、安全最佳实践、代码审计、威胁建模等
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {['分析这个漏洞的攻击路径', '给出可落地的修复代码示例', '帮我做一次威胁建模', '讲解 OWASP Top 10'].map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => setChatInput(q)}
+                        className="text-xs px-3 py-1.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 hover:border-brand-500/50 hover:text-brand-300 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>

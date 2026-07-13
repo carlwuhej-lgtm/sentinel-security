@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -75,8 +75,6 @@ interface AiAnalysis {
   risk_score?: number
   ai_model?: string
 }
-
-const severityOrder: Record<string, number> = { critical: 0, CRITICAL: 0, high: 1, HIGH: 1, medium: 2, MEDIUM: 2, low: 3, LOW: 3 }
 
 const severityStyle: Record<string, { dot: string; text: string; border: string; bg: string; badge: string }> = {
   critical: { dot: 'bg-red-500', text: 'text-red-400', border: 'border-red-500/40', bg: 'bg-red-500/10', badge: 'badge-critical' },
@@ -798,20 +796,65 @@ export default function Vulnerabilities() {
   const [verifyingId, setVerifyingId] = useState<number | null>(null)
   const [verifyMsg, setVerifyMsg] = useState<{ id: number; text: string; ok: boolean } | null>(null)
   const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0, breached: 0, fixed: 0 })
+  const [exporting, setExporting] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // 把当前 tab / 搜索映射为后端筛选参数
+  const buildFilterParams = () => {
+    const params: Record<string, string> = {}
+    if (activeTab === 'Critical') params.severity = 'critical'
+    else if (activeTab === 'High') params.severity = 'high'
+    else if (activeTab === 'Medium') params.severity = 'medium'
+    else if (activeTab === 'Low') params.severity = 'low'
+    else if (activeTab === '超时') params.sla = 'breached'
+    else if (activeTab === '已修复') params.status = 'fixed'
+    if (search.trim()) params.q = search.trim()
+    return params
+  }
 
   useEffect(() => {
-    loadVulnerabilities()
     loadUsers()
+    loadStats()
   }, [])
+
+  // 分页 / 筛选 / 搜索变化时重新拉取（搜索做 300ms 防抖）
+  useEffect(() => {
+    const t = setTimeout(() => { loadVulnerabilities() }, search ? 300 : 0)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, activeTab, search])
 
   const loadVulnerabilities = async () => {
     setLoading(true)
     try {
-      const res = await api.get('/scans/vulnerabilities')
-      setVulnerabilities(res.data || [])
-    } catch {
-      setVulnerabilities([])
+      const res = await api.get('/scans/vulnerabilities', {
+        params: { ...buildFilterParams(), page, per_page: PAGE_SIZE }
+      })
+      const data = res.data || {}
+      // 兼容后端两种返回：分页对象 {items,...} 或旧版数组 [...]
+      const items = Array.isArray(data) ? data : (data.items || [])
+      setVulnerabilities(items)
+      setTotal(Array.isArray(data) ? items.length : (data.total || 0))
+      setTotalPages(Array.isArray(data) ? 1 : (data.total_pages || 1))
+      setLoadError(null)
+    } catch (e: any) {
+      setVulnerabilities([]); setTotal(0); setTotalPages(1)
+      if (e?.response?.status === 401) {
+        setLoadError('登录状态已失效，请重新登录后再查看漏洞数据。')
+      } else {
+        setLoadError('漏洞数据加载失败，请确认后端服务是否正常运行。')
+      }
     } finally { setLoading(false) }
+  }
+
+  const loadStats = async () => {
+    try {
+      const res = await api.get('/scans/vulnerabilities/stats')
+      setStats(res.data || { total: 0, critical: 0, high: 0, medium: 0, low: 0, breached: 0, fixed: 0 })
+    } catch {}
   }
 
   const loadUsers = async () => {
@@ -821,11 +864,28 @@ export default function Vulnerabilities() {
     } catch { setUsers([]) }
   }
 
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const res = await api.get('/scans/vulnerabilities/export', {
+        params: buildFilterParams(),
+        responseType: 'blob'
+      })
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv;charset=utf-8' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vulnerabilities_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch {} finally { setExporting(false) }
+  }
+
   const handleStatusChange = async (id: number, status: string) => {
     try {
       await api.patch(`/scans/vulnerabilities/${id}`, { status })
       setVulnerabilities(prev => prev.map(v => v.id === id ? { ...v, status } : v))
       if (drawerVuln?.id === id) setDrawerVuln(prev => prev ? { ...prev, status } : prev)
+      loadStats()
     } catch {}
   }
 
@@ -849,53 +909,21 @@ export default function Vulnerabilities() {
       setVerifyMsg({ id: vid, text: message, ok: result === 'fixed' })
       setTimeout(() => setVerifyMsg(null), 4000)
       loadVulnerabilities()
+      loadStats()
     } catch (err: any) {
       setVerifyMsg({ id: vid, text: err.response?.data?.error || '验证失败', ok: false })
     } finally { setVerifyingId(null) }
   }
 
-  const filtered = useMemo(() => {
-    let list = vulnerabilities
-    if (activeTab === 'Critical') list = list.filter(v => v.severity?.toUpperCase() === 'CRITICAL')
-    else if (activeTab === 'High') list = list.filter(v => v.severity?.toUpperCase() === 'HIGH')
-    else if (activeTab === 'Medium') list = list.filter(v => v.severity?.toUpperCase() === 'MEDIUM')
-    else if (activeTab === 'Low') list = list.filter(v => v.severity?.toUpperCase() === 'LOW')
-    else if (activeTab === '超时') list = list.filter(v => v.sla_breached === 1 && v.status === 'open')
-    else if (activeTab === '已修复') list = list.filter(v => v.status === 'fixed')
-
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(v =>
-        (v.cve_id || '').toLowerCase().includes(q) ||
-        v.title.toLowerCase().includes(q) ||
-        (v.file_path || '').toLowerCase().includes(q)
-      )
-    }
-    return list.sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99))
-  }, [vulnerabilities, activeTab, search])
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  // 服务端已完成筛选/搜索/排序/分页，当前页数据直接用
+  const paged = vulnerabilities
   useEffect(() => { setPage(1) }, [activeTab, search])
-
-  const stats = useMemo(() => {
-    const open = vulnerabilities.filter(v => v.status === 'open')
-    return {
-      total: vulnerabilities.length,
-      critical: open.filter(v => v.severity?.toUpperCase() === 'CRITICAL').length,
-      high: open.filter(v => v.severity?.toUpperCase() === 'HIGH').length,
-      medium: open.filter(v => v.severity?.toUpperCase() === 'MEDIUM').length,
-      low: open.filter(v => v.severity?.toUpperCase() === 'LOW').length,
-      breached: open.filter(v => v.sla_breached === 1).length,
-      fixed: vulnerabilities.filter(v => v.status === 'fixed').length,
-    }
-  }, [vulnerabilities])
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
   const toggleSelectAll = () => {
-    const openVulns = filtered.filter(v => v.status === 'open')
+    const openVulns = vulnerabilities.filter(v => v.status === 'open')
     const allSelected = openVulns.length > 0 && openVulns.every(v => selectedIds.has(v.id))
     allSelected ? setSelectedIds(new Set()) : setSelectedIds(new Set(openVulns.map(v => v.id)))
   }
@@ -905,6 +933,7 @@ export default function Vulnerabilities() {
       await api.post('/scans/vulnerabilities/batch-fix', { ids: Array.from(selectedIds) })
       setSelectedIds(new Set())
       loadVulnerabilities()
+      loadStats()
     } catch {}
   }
 
@@ -913,6 +942,7 @@ export default function Vulnerabilities() {
     try {
       await api.delete(`/vulnerabilities/${id}`)
       loadVulnerabilities()
+      loadStats()
     } catch {}
   }
 
@@ -923,11 +953,12 @@ export default function Vulnerabilities() {
       await api.post('/scans/vulnerabilities/batch-delete', { ids: Array.from(selectedIds) })
       setSelectedIds(new Set())
       loadVulnerabilities()
+      loadStats()
     } catch {}
   }
 
-  const openCount = filtered.filter(v => v.status === 'open').length
-  const allOpenSelected = openCount > 0 && filtered.filter(v => v.status === 'open').every(v => selectedIds.has(v.id))
+  const openCount = vulnerabilities.filter(v => v.status === 'open').length
+  const allOpenSelected = openCount > 0 && vulnerabilities.filter(v => v.status === 'open').every(v => selectedIds.has(v.id))
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -936,9 +967,14 @@ export default function Vulnerabilities() {
           <h1 className="page-title">漏洞管理</h1>
           <p className="page-subtitle">全量漏洞追踪、SLA 管理与 AI 修复辅助</p>
         </div>
-        <button onClick={loadVulnerabilities} className="btn-secondary text-xs">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> 刷新
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExport} disabled={exporting || total === 0} className="btn-secondary text-xs disabled:opacity-40">
+            <Download size={13} className={exporting ? 'animate-pulse' : ''} /> {exporting ? '导出中...' : '导出 CSV'}
+          </button>
+          <button onClick={() => { loadVulnerabilities(); loadStats() }} className="btn-secondary text-xs">
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> 刷新
+          </button>
+        </div>
       </div>
 
       {/* Stats Bar */}
@@ -996,7 +1032,23 @@ export default function Vulnerabilities() {
             </div>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : loadError ? (
+        <div className="empty-state">
+          <div className="empty-state-icon"><Shield size={24} /></div>
+          <h3 className="empty-state-title">数据加载失败</h3>
+          <p className="empty-state-desc">{loadError}</p>
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => loadVulnerabilities()}
+              className="px-3 py-1.5 rounded bg-surface-800 border border-slate-700 text-xs hover:border-slate-600">
+              重试
+            </button>
+            <button onClick={() => { localStorage.removeItem('sentinel_token'); window.location.href = '/login' }}
+              className="px-3 py-1.5 rounded bg-primary-600 text-white text-xs hover:bg-primary-500">
+              重新登录
+            </button>
+          </div>
+        </div>
+      ) : vulnerabilities.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon"><Shield size={24} /></div>
           <h3 className="empty-state-title">{search.trim() ? '未找到匹配漏洞' : '暂无漏洞数据'}</h3>
@@ -1090,18 +1142,27 @@ export default function Vulnerabilities() {
       )}
 
       {/* Pagination */}
-      {filtered.length > PAGE_SIZE && (
+      {total > PAGE_SIZE && (
         <div className="flex items-center justify-between pt-3 text-xs text-slate-400">
-          <span>共 {filtered.length} 条</span>
+          <span>共 {total} 条 · 第 {page}/{totalPages} 页</span>
           <div className="flex items-center gap-1">
             <button disabled={page <= 1} onClick={() => setPage(page - 1)}
               className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">上一页</button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <button key={p} onClick={() => setPage(p)}
-                className={`px-2.5 py-1 rounded text-xs ${p === page ? 'bg-primary-600 text-white' : 'bg-surface-800 border border-slate-700 hover:border-slate-600'}`}>
-                {p}
-              </button>
-            ))}
+            {(() => {
+              // 页码窗口：最多显示 7 个，围绕当前页
+              const win = 7
+              let start = Math.max(1, page - Math.floor(win / 2))
+              let end = Math.min(totalPages, start + win - 1)
+              start = Math.max(1, end - win + 1)
+              const pages = []
+              for (let p = start; p <= end; p++) pages.push(p)
+              return pages.map(p => (
+                <button key={p} onClick={() => setPage(p)}
+                  className={`px-2.5 py-1 rounded text-xs ${p === page ? 'bg-primary-600 text-white' : 'bg-surface-800 border border-slate-700 hover:border-slate-600'}`}>
+                  {p}
+                </button>
+              ))
+            })()}
             <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}
               className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">下一页</button>
           </div>

@@ -5,6 +5,7 @@
 # 密钥 & 环境变量
 .env
 .jwt_secret
+.encryption_key
 *.secret
 *.key
 

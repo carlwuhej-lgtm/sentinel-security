@@ -48,7 +48,7 @@ interface Toast {
 
 export default function Settings() {
   const { t } = useI18n()
-  const [activeTab, setActiveTab] = useState<'email' | 'alert' | 'gate' | 'backup' | 'channels' | 'appearance'>('email')
+  const [activeTab, setActiveTab] = useState<'email' | 'alert' | 'gate' | 'backup' | 'channels' | 'appearance' | 'ai'>('email')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState('')
@@ -91,6 +91,27 @@ export default function Settings() {
   const [channelForm, setChannelForm] = useState({ name: '飞书', webhook_url: '', secret: '', enabled: true })
   const [channelBusy, setChannelBusy] = useState(false)
 
+  // ─── AI 模型供应商管理 ──────────────────────────────────────────
+  interface AiProvider {
+    id: number
+    name: string
+    provider_type: string
+    api_base: string
+    model: string
+    api_key: string
+    is_active: boolean
+    created_at: string
+    updated_at: string
+  }
+  const [providers, setProviders] = useState<AiProvider[]>([])
+  const [providerBusy, setProviderBusy] = useState(false)
+  const [providerTestingId, setProviderTestingId] = useState<number | null>(null)
+  const [providerTestResult, setProviderTestResult] = useState<{ id: number; reachable: boolean; reply_ok: boolean; detail: string } | null>(null)
+  const [showProviderForm, setShowProviderForm] = useState(false)
+  const [editingProviderId, setEditingProviderId] = useState<number | null>(null)
+  const emptyProviderForm = { name: '', provider_type: 'openai', api_base: '', model: '', api_key: '' }
+  const [providerForm, setProviderForm] = useState(emptyProviderForm)
+
   useEffect(() => {
     if (activeTab === 'email') {
       loadEmailConfig()
@@ -105,8 +126,86 @@ export default function Settings() {
     } else if (activeTab === 'appearance') {
       fetchLogoUrl().then(setLogo)
       api.get('/settings/registration').then(r => setAllowRegister(!!r.data.allow_public_register)).catch(() => {})
+    } else if (activeTab === 'ai') {
+      loadProviders()
     }
   }, [activeTab])
+
+  // ─── AI 模型供应商 ──────────────────────────────────────────────
+  const loadProviders = async () => {
+    try {
+      const res = await api.get('/ai/providers')
+      setProviders(res.data || [])
+    } catch {
+      showToast('error', '加载 AI 供应商失败')
+    }
+  }
+
+  const saveProvider = async () => {
+    if (!providerForm.name.trim() || !providerForm.api_base.trim() || !providerForm.model.trim()) {
+      showToast('error', '名称、API 地址、模型名称均为必填')
+      return
+    }
+    setProviderBusy(true)
+    try {
+      if (editingProviderId) {
+        await api.put(`/ai/providers/${editingProviderId}`, providerForm)
+        showToast('success', '供应商已更新')
+      } else {
+        await api.post('/ai/providers', providerForm)
+        showToast('success', '供应商已添加')
+      }
+      setShowProviderForm(false)
+      setEditingProviderId(null)
+      setProviderForm(emptyProviderForm)
+      loadProviders()
+    } catch (e: any) {
+      showToast('error', e.response?.data?.error || '保存失败')
+    } finally {
+      setProviderBusy(false)
+    }
+  }
+
+  const editProvider = (p: AiProvider) => {
+    setEditingProviderId(p.id)
+    setProviderForm({ name: p.name, provider_type: p.provider_type, api_base: p.api_base, model: p.model, api_key: '' })
+    setShowProviderForm(true)
+  }
+
+  const activateProvider = async (id: number) => {
+    try {
+      await api.post(`/ai/providers/${id}/activate`)
+      showToast('success', '已切换为激活模型（无需重启）')
+      loadProviders()
+    } catch (e: any) {
+      showToast('error', e.response?.data?.error || '切换失败')
+    }
+  }
+
+  const deleteProvider = async (id: number) => {
+    if (!window.confirm('确定删除该 AI 供应商？')) return
+    try {
+      await api.delete(`/ai/providers/${id}`)
+      showToast('success', '已删除')
+      setProviderTestResult(null)
+      loadProviders()
+    } catch (e: any) {
+      showToast('error', e.response?.data?.error || '删除失败')
+    }
+  }
+
+  const testProvider = async (id: number) => {
+    setProviderTestingId(id)
+    setProviderTestResult(null)
+    try {
+      const res = await api.post(`/ai/providers/${id}/test`)
+      setProviderTestResult({ id, ...res.data })
+    } catch (e: any) {
+      setProviderTestResult({ id, reachable: false, reply_ok: false, detail: e.response?.data?.error || '测试失败' })
+    } finally {
+      setProviderTestingId(null)
+    }
+  }
 
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message })
@@ -475,6 +574,29 @@ export default function Settings() {
     return <div className="text-slate-500 text-sm">加载中...</div>
   }
 
+  const aiInputStyle = {
+    flex: 1,
+    minWidth: 240,
+    padding: '8px 12px',
+    borderRadius: 6,
+    border: '1px solid #334155',
+    background: '#0f172a',
+    color: '#e2e8f0',
+    fontSize: 13,
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+  }
+
+  const aiBtn = (bg: string, border: string, color: string = '#e2e8f0') => ({
+    padding: '4px 12px',
+    background: bg,
+    color,
+    border: `1px solid ${border}`,
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
+  })
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
@@ -609,6 +731,23 @@ export default function Settings() {
           }}
         >
           {t('settings.tab.appearance')}
+        </button>
+        <button
+          className={activeTab === 'ai' ? 'tab tab-active' : 'tab'}
+          onClick={() => setActiveTab('ai')}
+          style={{
+            padding: '10px 24px',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: activeTab === 'ai' ? 600 : 400,
+            color: activeTab === 'ai' ? '#3b82f6' : '#94a3b8',
+            borderBottom: activeTab === 'ai' ? '2px solid #3b82f6' : '2px solid transparent',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}
+        >
+          AI 模型
         </button>
       </div>
 
@@ -1395,6 +1534,153 @@ export default function Settings() {
           </div>
         )}
         </>
+      )}
+
+      {/* ===== Tab 7: AI 模型管理 ===== */}
+      {activeTab === 'ai' && (
+        <div>
+          <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <h3 className="text-white font-semibold text-sm">AI 模型供应商</h3>
+              {isAdmin && (
+                <button
+                  onClick={() => { setEditingProviderId(null); setProviderForm(emptyProviderForm); setShowProviderForm(s => !s) }}
+                  style={{ padding: '6px 14px', background: showProviderForm ? '#334155' : '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+                >
+                  {showProviderForm ? '收起' : '+ 新增供应商'}
+                </button>
+              )}
+            </div>
+            <p className="text-slate-500 text-xs mb-4">配置本地 Ollama 或第三方 OpenAI 兼容模型（DeepSeek / 通义 / GPT / 智谱等）。切换激活项即时生效，无需重启。</p>
+
+            {showProviderForm && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8, padding: 16, borderRadius: 8, background: '#0f172a', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <input
+                    placeholder="名称（如：Ollama 本地 / DeepSeek）"
+                    value={providerForm.name}
+                    onChange={(e) => setProviderForm({ ...providerForm, name: e.target.value })}
+                    style={aiInputStyle}
+                  />
+                  <select
+                    value={providerForm.provider_type}
+                    onChange={(e) => setProviderForm({ ...providerForm, provider_type: e.target.value })}
+                    style={aiInputStyle}
+                  >
+                    <option value="ollama">Ollama（本地，免 Key）</option>
+                    <option value="openai">OpenAI 兼容（DeepSeek/通义/GPT/智谱…）</option>
+                    <option value="azure">Azure OpenAI</option>
+                  </select>
+                </div>
+                <input
+                  placeholder="API 地址（如 http://10.80.3.180:11434/v1 或 https://api.deepseek.com/v1）"
+                  value={providerForm.api_base}
+                  onChange={(e) => setProviderForm({ ...providerForm, api_base: e.target.value })}
+                  style={aiInputStyle}
+                />
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <input
+                    placeholder="模型名称（如 qwen3:0.6b / deepseek-chat / gpt-4o）"
+                    value={providerForm.model}
+                    onChange={(e) => setProviderForm({ ...providerForm, model: e.target.value })}
+                    style={aiInputStyle}
+                  />
+                  <input
+                    type="password"
+                    placeholder={editingProviderId ? '留空则不修改' : 'API Key（Ollama 留空）'}
+                    value={providerForm.api_key}
+                    onChange={(e) => setProviderForm({ ...providerForm, api_key: e.target.value })}
+                    style={aiInputStyle}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={saveProvider}
+                    disabled={providerBusy}
+                    style={{ padding: '7px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: providerBusy ? 'not-allowed' : 'pointer', fontSize: 13, opacity: providerBusy ? 0.7 : 1 }}
+                  >
+                    {providerBusy ? '保存中...' : (editingProviderId ? '保存修改' : '添加')}
+                  </button>
+                  <button
+                    onClick={() => { setShowProviderForm(false); setEditingProviderId(null); setProviderForm(emptyProviderForm) }}
+                    style={{ padding: '7px 16px', background: 'transparent', color: '#94a3b8', border: '1px solid #475569', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {providers.length === 0 ? (
+              <p className="text-slate-500 text-sm mt-4">暂无供应商，点击右上角新增。</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 8 }}>
+                <thead>
+                  <tr style={{ color: '#94a3b8', textAlign: 'left', borderBottom: '1px solid #1e293b' }}>
+                    <th style={{ padding: '8px 10px' }}>名称</th>
+                    <th style={{ padding: '8px 10px' }}>类型</th>
+                    <th style={{ padding: '8px 10px' }}>模型</th>
+                    <th style={{ padding: '8px 10px' }}>API 地址</th>
+                    <th style={{ padding: '8px 10px' }}>状态</th>
+                    <th style={{ padding: '8px 10px' }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providers.map((p) => (
+                    <tr key={p.id} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '8px 10px', color: '#e2e8f0' }}>{p.name}</td>
+                      <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.provider_type}</td>
+                      <td style={{ padding: '8px 10px', color: '#e2e8f0' }}>{p.model}</td>
+                      <td style={{ padding: '8px 10px', color: '#94a3b8', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.api_base}</td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {p.is_active
+                          ? <span style={{ color: '#22c55e', fontSize: 12 }}>● 使用中</span>
+                          : <span style={{ color: '#64748b', fontSize: 12 }}>未激活</span>}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {!p.is_active && (
+                            <button onClick={() => activateProvider(p.id)} style={aiBtn('#3b82f6', '#1d4ed8')}>激活</button>
+                          )}
+                          <button onClick={() => testProvider(p.id)} disabled={providerTestingId === p.id} style={aiBtn('#334155', '#475569')}>
+                            {providerTestingId === p.id ? '测试中...' : '测试'}
+                          </button>
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => editProvider(p)} style={aiBtn('transparent', '#475569', '#60a5fa')}>编辑</button>
+                              <button onClick={() => deleteProvider(p.id)} style={aiBtn('transparent', '#7f1d1d', '#f87171')}>删除</button>
+                            </>
+                          )}
+                        </div>
+                        {providerTestResult && providerTestResult.id === p.id && (
+                          <div style={{
+                            marginTop: 6, padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                            color: providerTestResult.reachable ? '#86efac' : '#fca5a5',
+                            background: providerTestResult.reachable ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)',
+                            border: `1px solid ${providerTestResult.reachable ? 'rgba(22,163,74,0.3)' : 'rgba(220,38,38,0.3)'}`,
+                          }}>
+                            {providerTestResult.reachable ? (providerTestResult.reply_ok ? '✓ 连接正常，模型可调用' : '⚠ 连接可达但调用失败') : '✗ 连接失败'}
+                            {providerTestResult.detail ? ` — ${providerTestResult.detail}` : ''}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 24 }}>
+            <h3 className="text-white font-semibold text-sm mb-1">使用说明</h3>
+            <ul style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.9, paddingLeft: 20, margin: 0 }}>
+              <li>本地 <b style={{ color: '#e2e8f0' }}>Ollama</b> 已默认配置并激活，无需 Key，断网也可用。</li>
+              <li>第三方模型填 <b style={{ color: '#e2e8f0' }}>OpenAI 兼容</b> 地址即可（DeepSeek / 通义千问 / GPT / 智谱 GLM / Kimi 等），API Key 加密存储。</li>
+              <li>「激活」切换即时生效，漏洞分析、AI 问答、预生成修复建议均自动改用新模型，<b style={{ color: '#e2e8f0' }}>无需重启后端</b>。</li>
+              <li>换用更大的模型（如 gpt-4o / deepseek-chat / qwen-max）可显著提升漏洞分析与修复建议质量。</li>
+            </ul>
+          </div>
+        </div>
       )}
     </div>
   )

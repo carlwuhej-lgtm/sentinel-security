@@ -86,6 +86,21 @@ const typeBadgeClass = (type: string) => {
   return `inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border transition-colors ${colors[type] || 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`
 }
 
+const PAGE_SIZE = 12
+
+// 生成带省略号的页码窗口
+function getPageWindow(current: number, total: number): (number | string)[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages: (number | string)[] = [1]
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+  if (start > 2) pages.push('...')
+  for (let p = start; p <= end; p++) pages.push(p)
+  if (end < total - 1) pages.push('...')
+  pages.push(total)
+  return pages
+}
+
 export default function Projects() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
@@ -95,14 +110,19 @@ export default function Projects() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
 
-  useEffect(() => { loadProjects() }, [])
+  useEffect(() => { loadProjects() }, [page])
 
   const loadProjects = async () => {
     setLoading(true)
     try {
-      const res = await api.get('/projects')
+      const res = await api.get('/projects', { params: { page, per_page: PAGE_SIZE } })
       setProjects(res.data?.items || [])
+      setTotal(res.data?.total ?? (res.data?.items?.length || 0))
+      setTotalPages(Math.max(1, res.data?.pages ?? 1))
     } catch {
       setProjects([])
     } finally {
@@ -138,11 +158,13 @@ export default function Projects() {
   const handleSubmit = async () => {
     if (!formData.name.trim()) return
 
-    // URL 自动规范化：修复缺少 // 的 URL（如 https:baidu.com → https://baidu.com）
-    let targetUrl = formData.target_url.trim()
-    if (targetUrl && targetUrl.match(/^https?:[^/]/)) {
-      targetUrl = targetUrl.replace(/^http(s?):/, 'http$1://')
-    }
+    // URL 自动规范化：逐行修复缺少 // 的 URL（支持多个目标，每行一个）
+    const targetUrl = formData.target_url
+      .split(/[\n\r,;]+/)
+      .map((u) => u.trim())
+      .filter(Boolean)
+      .map((u) => (u.match(/^https?:[^/]/) ? u.replace(/^http(s?):/, 'http$1://') : u))
+      .join('\n')
     const submitData = { ...formData, target_url: targetUrl }
 
     setSubmitting(true)
@@ -155,7 +177,11 @@ export default function Projects() {
       setShowModal(false)
       setEditingId(null)
       setFormData(emptyForm)
-      await loadProjects()
+      if (!editingId && page !== 1) {
+        setPage(1)  // 新建后跳到第一页（按 created_at DESC 排序，新项目在首页）
+      } else {
+        await loadProjects()
+      }
     } catch {
     } finally {
       setSubmitting(false)
@@ -166,7 +192,12 @@ export default function Projects() {
     try {
       await api.delete(`/projects/${id}`)
       setDeleteConfirmId(null)
-      await loadProjects()
+      // 删的是当前页最后一条且不在首页时，回退一页
+      if (projects.length === 1 && page > 1) {
+        setPage(page - 1)
+      } else {
+        await loadProjects()
+      }
     } catch {}
   }
 
@@ -281,7 +312,12 @@ export default function Projects() {
                     <circle cx="12" cy="12" r="10"/>
                     <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
                   </svg>
-                  <span className="text-xs text-orange-400 truncate">DAST: {p.target_url}</span>
+                  <span className="text-xs text-orange-400 truncate">
+                    {(() => {
+                      const urls = p.target_url.split(/[\n\r,;]+/).map((u) => u.trim()).filter(Boolean)
+                      return urls.length > 1 ? `DAST: ${urls.length} 个目标` : `DAST: ${urls[0] || p.target_url}`
+                    })()}
+                  </span>
                 </div>
               )}
 
@@ -336,6 +372,34 @@ export default function Projects() {
         </div>
       )}
 
+      {/* Pagination */}
+      {!loading && total > PAGE_SIZE && (
+        <div className="flex items-center justify-between pt-5 text-xs text-slate-400">
+          <span>共 {total} 个项目 · 第 {page} / {totalPages} 页</span>
+          <div className="flex items-center gap-1">
+            <button disabled={page <= 1} onClick={() => setPage(page - 1)}
+              className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">
+              上一页
+            </button>
+            {getPageWindow(page, totalPages).map((p, i) =>
+              p === '...' ? (
+                <span key={`e${i}`} className="px-1.5 text-slate-600">…</span>
+              ) : (
+                <button key={p} onClick={() => setPage(p as number)}
+                  className={`px-2.5 py-1 rounded text-xs ${p === page
+                    ? 'bg-primary-600 text-white' : 'bg-surface-800 border border-slate-700 hover:border-slate-600'}`}>
+                  {p}
+                </button>
+              )
+            )}
+            <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}
+              className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Create / Edit Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
@@ -379,13 +443,17 @@ export default function Projects() {
 
               <div className="input-group">
                 <label className="input-label">目标 URL (DAST 扫描)</label>
-                <input
-                  type="text"
+                <textarea
                   value={formData.target_url}
                   onChange={(e) => setFormData({ ...formData, target_url: e.target.value })}
-                  placeholder="https://example.com (DAST 扫描用)"
+                  placeholder={"https://example.com\nhttps://api.example.com\n（支持多个：每行一个 URL，DAST 会逐个扫描）"}
+                  rows={4}
                   className="input"
+                  style={{ resize: 'vertical', fontFamily: 'inherit' }}
                 />
+                <span className="text-xs text-slate-500 mt-1 block">
+                  支持批量：一行填一个 URL，DAST 扫描会对每个目标各跑一遍并合并结果
+                </span>
               </div>
 
               <div className="input-group">

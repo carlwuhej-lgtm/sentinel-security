@@ -338,13 +338,12 @@ def delete_scan(sid: int):
 
 # ─── 漏洞管理 API ───
 
-@scans_bp.route("/vulnerabilities", methods=["GET"])
-@login_required
-def list_vulnerabilities():
-    """GET /api/vulnerabilities — 列出所有漏洞，支持筛选"""
-    db = get_db()
+def _build_vuln_filters():
+    """根据请求参数构建漏洞查询的 WHERE 子句与参数列表（供列表/导出/统计复用）。"""
     severity = request.args.get("severity")
     status = request.args.get("status")  # 支持逗号分隔多值如 open,in_progress
+    sla = request.args.get("sla")        # "breached" → 仅超时未处理
+    q = (request.args.get("q") or "").strip()
     conditions = []
     params = []
     if severity:
@@ -359,17 +358,133 @@ def list_vulnerabilities():
             placeholders = ",".join(["?"] * len(status_list))
             conditions.append(f"v.status IN ({placeholders})")
             params.extend(status_list)
+    if sla == "breached":
+        conditions.append("v.sla_breached=1 AND v.status='open'")
+    if q:
+        conditions.append("(LOWER(v.cve_id) LIKE ? OR LOWER(v.title) LIKE ? OR LOWER(v.file_path) LIKE ?)")
+        like = f"%{q.lower()}%"
+        params.extend([like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    return where, params
+
+
+@scans_bp.route("/vulnerabilities", methods=["GET"])
+@login_required
+def list_vulnerabilities():
+    """GET /api/vulnerabilities — 列出漏洞，支持筛选/搜索/分页。
+
+    - 不传 page：返回全量数组（向后兼容 AI 分析页、命令面板等）
+    - 传 page：返回 {items, total, page, per_page, total_pages}（后端真分页）
+    """
+    db = get_db()
+    where, params = _build_vuln_filters()
+    base_from = """FROM vulnerabilities v
+            LEFT JOIN scan_tasks s ON v.scan_id = s.id
+            LEFT JOIN projects p ON s.project_id = p.id"""
+    select_cols = "SELECT v.*, s.tool_type, p.name as project_name"
+    order = "ORDER BY CASE LOWER(v.severity) WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, v.created_at DESC"
+
+    page_arg = request.args.get("page")
+    if page_arg is None:
+        # 向后兼容：无分页参数时返回全量数组
+        rows = db.execute(f"{select_cols} {base_from} {where} {order}", params).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+    # 后端真分页
+    try:
+        page = max(1, int(page_arg))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", 20))
+    except (TypeError, ValueError):
+        per_page = 20
+    per_page = max(1, min(per_page, 200))
+
+    total = db.execute(f"SELECT COUNT(*) {base_from} {where}", params).fetchone()[0]
+    offset = (page - 1) * per_page
     rows = db.execute(
-        f"""SELECT v.*, s.tool_type, p.name as project_name
+        f"{select_cols} {base_from} {where} {order} LIMIT ? OFFSET ?",
+        params + [per_page, offset],
+    ).fetchall()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return jsonify({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    })
+
+
+@scans_bp.route("/vulnerabilities/stats", methods=["GET"])
+@login_required
+def vulnerabilities_stats():
+    """GET /api/scans/vulnerabilities/stats — 漏洞统计概览（不受分页影响，供统计卡片使用）。"""
+    db = get_db()
+    row = db.execute(
+        """SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status='open' AND LOWER(severity)='critical' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN status='open' AND LOWER(severity)='high' THEN 1 ELSE 0 END) AS high,
+            SUM(CASE WHEN status='open' AND LOWER(severity)='medium' THEN 1 ELSE 0 END) AS medium,
+            SUM(CASE WHEN status='open' AND LOWER(severity)='low' THEN 1 ELSE 0 END) AS low,
+            SUM(CASE WHEN status='open' AND sla_breached=1 THEN 1 ELSE 0 END) AS breached,
+            SUM(CASE WHEN status='fixed' THEN 1 ELSE 0 END) AS fixed
+           FROM vulnerabilities"""
+    ).fetchone()
+    return jsonify({k: (row[k] or 0) for k in row.keys()})
+
+
+@scans_bp.route("/vulnerabilities/export", methods=["GET"])
+@login_required
+def export_vulnerabilities():
+    """GET /api/scans/vulnerabilities/export — 按当前筛选导出漏洞为 CSV。"""
+    import csv
+    import io
+    db = get_db()
+    where, params = _build_vuln_filters()
+    rows = db.execute(
+        f"""SELECT v.cve_id, v.title, v.severity, v.status, v.cvss_score,
+                   v.cwe_id, v.file_path, v.line, v.source_tool,
+                   p.name AS project_name, v.assigned_to,
+                   v.sla_due_date, v.sla_breached, v.created_at, v.description
             FROM vulnerabilities v
             LEFT JOIN scan_tasks s ON v.scan_id = s.id
             LEFT JOIN projects p ON s.project_id = p.id
             {where}
-            ORDER BY v.created_at DESC""",
-        params
+            ORDER BY CASE LOWER(v.severity) WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, v.created_at DESC""",
+        params,
     ).fetchall()
-    return jsonify([dict(r) for r in rows])
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "CVE/编号", "标题", "严重度", "状态", "CVSS", "CWE",
+        "文件路径", "行号", "来源工具", "所属项目", "指派人ID",
+        "SLA到期", "SLA超时", "发现时间", "描述",
+    ])
+    for r in rows:
+        d = dict(r)
+        writer.writerow([
+            d.get("cve_id", ""), d.get("title", ""), d.get("severity", ""),
+            d.get("status", ""), d.get("cvss_score", ""), d.get("cwe_id", ""),
+            d.get("file_path", ""), d.get("line", ""), d.get("source_tool", ""),
+            d.get("project_name", ""), d.get("assigned_to", ""),
+            d.get("sla_due_date", ""), d.get("sla_breached", ""),
+            d.get("created_at", ""),
+            (d.get("description", "") or "").replace("\n", " ").replace("\r", " "),
+        ])
+
+    # 加 UTF-8 BOM，Excel 打开中文不乱码
+    csv_data = "\ufeff" + buf.getvalue()
+    from flask import Response
+    filename = f"vulnerabilities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        csv_data,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @scans_bp.route("/vulnerabilities/<int:vid>", methods=["PATCH"])

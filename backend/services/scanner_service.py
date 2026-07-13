@@ -131,6 +131,116 @@ def _pregenerate_ai_fix(vuln: dict, timeout: int = 3) -> str:
         return ""
 
 
+def _normalize_url(url: str) -> str:
+    """规范化单个 URL：补全缺失的 //（如 https:x.com → https://x.com）。"""
+    u = (url or "").strip()
+    if not u:
+        return u
+    if u.startswith("http:") and not u.startswith("http://"):
+        u = u.replace("http:", "http://", 1)
+    elif u.startswith("https:") and not u.startswith("https://"):
+        u = u.replace("https:", "https://", 1)
+    return u
+
+
+def _parse_targets(raw: str) -> List[str]:
+    """
+    把 target_url 字段拆成多个目标 URL 列表。
+
+    支持分隔符：换行、逗号、分号、空白。向后兼容单 URL（返回单元素列表）。
+    去重、去空、保序，并对每个 URL 做规范化。
+    """
+    if not raw:
+        return []
+    import re as _re
+    parts = _re.split(r"[\n\r,;\s]+", str(raw))
+    seen = set()
+    out = []
+    for p in parts:
+        u = _normalize_url(p)
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _run_multi_target_scan(scanner, project_config: dict, targets: List[str],
+                           db: sqlite3.Connection, scan_id: int):
+    """
+    DAST 多目标扫描：对每个目标 URL 各跑一遍，合并所有漏洞为一个 ScanResult。
+
+    - 单个目标扫描失败不影响其他目标（记录到 raw_output）。
+    - 只要有一个目标成功产出结果，整体即视为 completed。
+    """
+    from integrations.base import ScanResult
+
+    all_vulns = []
+    raw_parts = []
+    total_duration = 0
+    ok_targets = 0
+    n = len(targets)
+
+    for idx, tgt in enumerate(targets, 1):
+        cfg = dict(project_config)
+        cfg["target_url"] = tgt
+        # 进度：15 → 70 之间按目标数均匀推进
+        prog = 15 + int(55 * (idx - 1) / max(n, 1))
+        try:
+            db.execute(
+                "UPDATE scan_tasks SET progress=?, progress_message=? WHERE id=?",
+                (prog, f"正在扫描目标 {idx}/{n}: {tgt[:60]}", scan_id),
+            )
+            db.commit()
+        except Exception:
+            pass
+
+        try:
+            r = scanner.run(cfg)
+            total_duration += getattr(r, "duration_ms", 0) or 0
+            vulns = getattr(r, "vulnerabilities", []) or []
+            # 给每条漏洞的描述标注来源目标，便于区分是哪个 URL 的问题
+            for v in vulns:
+                if tgt not in (getattr(v, "file_path", "") or ""):
+                    v.description = f"[目标: {tgt}] {v.description}"
+                all_vulns.append(v)
+            status = getattr(r, "status", "completed")
+            if status in ("completed", "completed_no_findings"):
+                ok_targets += 1
+            raw_parts.append(f"=== 目标 {idx}/{n}: {tgt} (status={status}, vulns={len(vulns)}) ===")
+            raw_parts.append((getattr(r, "raw_output", "") or "")[:500])
+        except Exception as e:
+            raw_parts.append(f"=== 目标 {idx}/{n}: {tgt} 扫描异常: {str(e)[:150]} ===")
+
+    # 汇总严重性统计
+    sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for v in all_vulns:
+        sev = getattr(v, "severity", "low")
+        if sev in sev_counts:
+            sev_counts[sev] += 1
+
+    overall_status = "completed" if ok_targets > 0 else "failed"
+
+    import uuid as _uuid
+    return ScanResult(
+        scan_id=_uuid.uuid4().hex[:12],
+        tool_key=getattr(scanner, "tool_key", "zap"),
+        project_name="",
+        status=overall_status,
+        vulnerabilities=all_vulns,
+        duration_ms=total_duration,
+        summary={
+            "total": len(all_vulns),
+            "critical": sev_counts["critical"],
+            "high": sev_counts["high"],
+            "medium": sev_counts["medium"],
+            "low": sev_counts["low"],
+            "targets_scanned": n,
+            "targets_ok": ok_targets,
+        },
+        raw_output=f"[多目标 DAST] 共 {n} 个目标，{ok_targets} 个成功\n" + "\n".join(raw_parts),
+    )
+
+
 def _get_scanner(tool_name: str, tool_type: str, endpoint: str = "", api_key: str = "") -> Optional[BaseScanner]:
     """根据工具名获取对应的扫描器实例。"""
     # 1) 精确名称匹配
@@ -219,14 +329,6 @@ def execute_scan(
             project_config["lang"] = (
                 project["language"] if "language" in project.keys() and project["language"] else "python"
             )
-            # ── URL 规范化：自动补全缺失的 // ──
-            _target = project_config.get("target_url", "")
-            if _target and _target.startswith("http:") and not _target.startswith("http://"):
-                _target = _target.replace("http:", "http://", 1)
-                project_config["target_url"] = _target
-            elif _target and _target.startswith("https:") and not _target.startswith("https://"):
-                _target = _target.replace("https:", "https://", 1)
-                project_config["target_url"] = _target
             # 进度：开始扫描
             db.execute(
                 "UPDATE scan_tasks SET progress=15, progress_message='正在执行代码扫描...' WHERE id=?",
@@ -235,7 +337,19 @@ def execute_scan(
             db.commit()
             print(f"[ScannerService] scanner instance={scanner!r}, class={scanner.__class__}, module={scanner.__class__.__module__}", flush=True)
             print(f"[ScannerService] project_config local_path={project_config.get('local_path')}", flush=True)
-            scan_result = scanner.run(project_config)
+
+            # ── DAST 多目标：target_url 可含多个 URL（换行/逗号/分号分隔），逐个扫描并合并 ──
+            targets = _parse_targets(project_config.get("target_url", ""))
+            if str(tool_type).upper() == "DAST" and len(targets) > 1:
+                scan_result = _run_multi_target_scan(
+                    scanner, project_config, targets, db, scan_id
+                )
+            else:
+                # 单目标（含非 DAST 工具）：规范化后直接扫描
+                if targets:
+                    project_config["target_url"] = _normalize_url(targets[0])
+                scan_result = scanner.run(project_config)
+
             # 进度：扫描完成，开始入库
             db.execute(
                 "UPDATE scan_tasks SET progress=75, progress_message='正在分析扫描结果...' WHERE id=?",
