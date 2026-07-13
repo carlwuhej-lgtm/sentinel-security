@@ -112,6 +112,17 @@ export default function Settings() {
   const emptyProviderForm = { name: '', provider_type: 'openai', api_base: '', model: '', api_key: '' }
   const [providerForm, setProviderForm] = useState(emptyProviderForm)
 
+  // 第三方模型预设模板：选一个即自动填好类型/地址/默认模型，只差 API Key
+  const AI_PROVIDER_PRESETS = [
+    { key: 'ollama', label: 'Ollama 本地（免 Key）', provider_type: 'ollama', name: 'Ollama 本地', api_base: 'http://localhost:11434/v1', model: 'qwen3:0.6b' },
+    { key: 'deepseek', label: 'DeepSeek', provider_type: 'openai', name: 'DeepSeek', api_base: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    { key: 'qwen', label: '通义千问（DashScope）', provider_type: 'openai', name: '通义千问', api_base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+    { key: 'openai', label: 'OpenAI（GPT）', provider_type: 'openai', name: 'OpenAI GPT', api_base: 'https://api.openai.com/v1', model: 'gpt-4o' },
+    { key: 'glm', label: '智谱 GLM', provider_type: 'openai', name: '智谱 GLM', api_base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
+    { key: 'kimi', label: 'Kimi（Moonshot）', provider_type: 'openai', name: 'Kimi', api_base: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+    { key: 'azure', label: 'Azure OpenAI', provider_type: 'azure', name: 'Azure OpenAI', api_base: 'https://YOUR-RESOURCE.openai.azure.com/openai', model: 'gpt-4o' },
+  ]
+
   useEffect(() => {
     if (activeTab === 'email') {
       loadEmailConfig()
@@ -1555,6 +1566,22 @@ export default function Settings() {
 
             {showProviderForm && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8, padding: 16, borderRadius: 8, background: '#0f172a', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ color: '#94a3b8', fontSize: 13, whiteSpace: 'nowrap' }}>快捷预设：</span>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const pre = AI_PROVIDER_PRESETS.find((p) => p.key === e.target.value)
+                      if (pre) setProviderForm({ ...providerForm, provider_type: pre.provider_type, name: pre.name, api_base: pre.api_base, model: pre.model })
+                    }}
+                    style={aiInputStyle}
+                  >
+                    <option value="">— 选一个自动填（也可手填）—</option>
+                    {AI_PROVIDER_PRESETS.map((p) => (
+                      <option key={p.key} value={p.key}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   <input
                     placeholder="名称（如：Ollama 本地 / DeepSeek）"
@@ -1675,6 +1702,7 @@ export default function Settings() {
             <h3 className="text-white font-semibold text-sm mb-1">使用说明</h3>
             <ul style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.9, paddingLeft: 20, margin: 0 }}>
               <li>本地 <b style={{ color: '#e2e8f0' }}>Ollama</b> 已默认配置并激活，无需 Key，断网也可用。</li>
+              <li>新增第三方时，点开表单顶部「<b style={{ color: '#e2e8f0' }}>快捷预设</b>」可一键填好类型 / API 地址 / 默认模型，再补 Key 即可，免手敲。</li>
               <li>第三方模型填 <b style={{ color: '#e2e8f0' }}>OpenAI 兼容</b> 地址即可（DeepSeek / 通义千问 / GPT / 智谱 GLM / Kimi 等），API Key 加密存储。</li>
               <li>「激活」切换即时生效，漏洞分析、AI 问答、预生成修复建议均自动改用新模型，<b style={{ color: '#e2e8f0' }}>无需重启后端</b>。</li>
               <li>换用更大的模型（如 gpt-4o / deepseek-chat / qwen-max）可显著提升漏洞分析与修复建议质量。</li>

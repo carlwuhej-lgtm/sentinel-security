@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 邮件告警通知系统
 扫描发现 Critical/High 漏洞时自动发送邮件给安全团队。
@@ -148,9 +150,9 @@ class EmailNotifier:
                 server.login(self.config["username"], self.config["password"])
                 server.send_message(msg)
 
-            print(f"[EmailNotifier] Sent: {subject}")
+            logger.info(f"[EmailNotifier] Sent: {subject}")
             return True
 
         except Exception as e:
-            print(f"[EmailNotifier] Failed to send email: {e}")
+            logger.error(f"[EmailNotifier] Failed to send email: {e}")
             return False

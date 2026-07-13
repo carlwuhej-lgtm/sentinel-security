@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # ─── 扫描编排 + 工具集成 + 告警通知 ───
 """
 扫描路由：创建扫描 → 调用工具适配器 → 漏洞入库 → 邮件告警
@@ -63,7 +65,7 @@ def _send_alert(project_name: str, tool_name: str, vulns: list, scan_result: dic
     try:
         _notifier.send_scan_alert(project_name, tool_name, vulns, scan_result)
     except Exception as e:
-        print(f"[Alert] Failed to send alert: {e}")
+        logger.error(f"[Alert] Failed to send alert: {e}")
         # 告警失败不影响扫描流程
 
 
@@ -80,7 +82,7 @@ def _send_assignment_notification(db, vuln, user_id: int, vuln_id: int):
         # 查询被指派人邮箱
         assignee = db.execute("SELECT id, name, email FROM users WHERE id=?", (user_id,)).fetchone()
         if not assignee or not assignee["email"]:
-            print(f"[Notify] User #{user_id} has no email, skipping")
+            logger.warning(f"[Notify] User #{user_id} has no email, skipping")
             return
 
         # 查询项目名
@@ -111,12 +113,12 @@ def _send_assignment_notification(db, vuln, user_id: int, vuln_id: int):
             assignee["name"] or "",
         )
         if success:
-            print(f"[Notify] Fix notification sent to {assignee['email']} for vuln #{vuln_id}")
+            logger.info(f"[Notify] Fix notification sent to {assignee['email']} for vuln #{vuln_id}")
         else:
-            print(f"[Notify] Failed to send to {assignee['email']}: {msg}")
+            logger.error(f"[Notify] Failed to send to {assignee['email']}: {msg}")
 
     except Exception as e:
-        print(f"[Notify] Notification failed (non-blocking): {e}")
+        logger.error(f"[Notify] Notification failed (non-blocking): {e}")
 
 
 # ═══════════════════════════════════ 路由 ═══════════════════════════════════

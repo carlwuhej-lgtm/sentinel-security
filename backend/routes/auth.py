@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # ─── JWT Auth (Phase 1 增强) ───
 """
 JWT 认证 + RBAC 基础
@@ -102,7 +104,7 @@ def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
     except Exception as e:
-        print(f"[JWT ERROR] {type(e).__name__}: {e}")
+        logger.error(f"[JWT ERROR] {type(e).__name__}: {e}")
         return None
 
 

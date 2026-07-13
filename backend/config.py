@@ -2,7 +2,8 @@
 哨兵应用安全平台 — 全局配置
 修改此文件即可自定义平台行为，无需改动代码。
 """
-
+import logging
+logger = logging.getLogger(__name__)
 import os
 import secrets
 
@@ -15,6 +16,7 @@ try:
 except ImportError:
     pass
 
+
 # ============================================================
 # 数据库
 # ============================================================
@@ -22,7 +24,7 @@ DATABASE_PATH = os.environ.get(
     "SENTINEL_DB_PATH",
     os.path.join(os.path.dirname(__file__), "sentinel.db")
 )
-print(f"[CONFIG] DATABASE_PATH = {DATABASE_PATH}", flush=True)
+logger.info(f"[CONFIG] DATABASE_PATH = {DATABASE_PATH}")
 
 
 # ============================================================
@@ -58,9 +60,9 @@ def _load_jwt_secret() -> str:
             f.write(generated + "\n")
         # 仅文件所有者可读写（Unix/Windows 均适用）
         os.chmod(secret_file, 0o600)
-        print(f"[Sentinel] 已生成 JWT 密钥并持久化到 {secret_file}")
+        logger.info(f"[Sentinel] 已生成 JWT 密钥并持久化到 {secret_file}")
     except OSError:
-        print("[Sentinel] 警告: 无法持久化 JWT 密钥，重启后 Token 将失效")
+        logger.warning("[Sentinel] 警告: 无法持久化 JWT 密钥，重启后 Token 将失效")
     return generated
 
 JWT_SECRET = _load_jwt_secret()

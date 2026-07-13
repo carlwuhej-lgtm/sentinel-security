@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Semgrep SAST scanner adapter.
 
@@ -30,7 +32,7 @@ class SemgrepScanner(BaseScanner):
         lang = project_config.get("lang") or project_config.get("language") or "python"
         scan_target = project_config.get("local_path") or project_config.get("repo_url") or ""
 
-        print(f"[SemgrepScanner] scan_target={scan_target}, lang={lang}", flush=True)
+        logger.info(f"[SemgrepScanner] scan_target={scan_target}, lang={lang}")
         return self._run_real(scan_target, lang)
 
     def _run_real(self, repo: str, lang: str):
@@ -51,7 +53,7 @@ class SemgrepScanner(BaseScanner):
                 status="failed",
             )
 
-        print(f"[SemgrepScanner] resolved scan_path={scan_path}", flush=True)
+        logger.info(f"[SemgrepScanner] resolved scan_path={scan_path}")
         vulns, raw, ok = self._run_semgrep_cli(scan_path)
         duration_ms = int((time.time() - start) * 1000)
         if not ok:
@@ -91,9 +93,9 @@ class SemgrepScanner(BaseScanner):
                     extra.append("--exclude-rule")
                     extra.append(pat)
             if extra:
-                print(f"[SemgrepScanner] loaded {len(extra) // 2} ignore rule(s) from DB", flush=True)
+                logger.info(f"[SemgrepScanner] loaded {len(extra) // 2} ignore rule(s) from DB")
         except Exception as e:
-            print(f"[SemgrepScanner] failed to load DB ignore rules: {e}", flush=True)
+            logger.error(f"[SemgrepScanner] failed to load DB ignore rules: {e}")
         return extra
 
     def _run_semgrep_cli(self, scan_path: str):
@@ -181,8 +183,8 @@ class SemgrepScanner(BaseScanner):
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 
-        print(f"[SemgrepScanner] rulesets=auto+custom+python+secrets+audit", flush=True)
-        print(f"[SemgrepScanner] scan_path={scan_path}", flush=True)
+        logger.info(f"[SemgrepScanner] rulesets=auto+custom+python+secrets+audit")
+        logger.info(f"[SemgrepScanner] scan_path={scan_path}")
         try:
             # nosemgrep: env vars are hardcoded safe values, not user-controlled
             completed = subprocess.run(
@@ -203,7 +205,7 @@ class SemgrepScanner(BaseScanner):
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
         rc = completed.returncode
-        print(f"[SemgrepScanner] rc={rc}, stdout_len={len(stdout)}, stderr_len={len(stderr)}", flush=True)
+        logger.info(f"[SemgrepScanner] rc={rc}, stdout_len={len(stdout)}, stderr_len={len(stderr)}")
 
         if not stdout.strip():
             return [], f"Semgrep empty stdout (rc={rc})\nstderr={stderr[:2000]}", False
@@ -224,7 +226,7 @@ class SemgrepScanner(BaseScanner):
                 seen.add(key)
                 unique_findings.append(item)
 
-        print(f"[SemgrepScanner] raw={len(findings)} deduped={len(unique_findings)}", flush=True)
+        logger.info(f"[SemgrepScanner] raw={len(findings)} deduped={len(unique_findings)}")
         vulns = [self._finding_to_vulnerability(item) for item in unique_findings]
         return vulns, f"[Semgrep CLI] findings={len(unique_findings)} (raw={len(findings)})", True
 

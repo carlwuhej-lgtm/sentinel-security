@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # ─── Audit Logging (Phase 2 Enhanced) ───
 """
 集中式审计日志系统 v2
@@ -71,7 +73,7 @@ def audit_log(
         db.close()
     except Exception as e:
         # 审计日志写入失败不应阻断主流程
-        print(f"[AUDIT ERROR] {e}")
+        logger.error(f"[AUDIT ERROR] {e}")
 
 
 def _get_request_context() -> dict:

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 哨兵安全平台 — 邮件通知服务
 
@@ -520,7 +522,7 @@ class NotificationService:
         """
         smtp = self._get_smtp_config()
         if not smtp:
-            print("[Notification] SMTP not configured, skipping scan alert")
+            logger.warning("[Notification] SMTP not configured, skipping scan alert")
             return
 
         # 只告警 Critical 和 High
@@ -537,7 +539,7 @@ class NotificationService:
         recipients_str = row["recipients"] if row else ""
         to_emails = [e.strip() for e in recipients_str.split(",") if e.strip()]
         if not to_emails:
-            print("[Notification] No recipients configured, skipping alert")
+            logger.warning("[Notification] No recipients configured, skipping alert")
             return
 
         # Build HTML
@@ -600,7 +602,7 @@ class NotificationService:
         try:
             self._send(smtp, to_emails, f"[Sentinel 扫描告警] {project_name} 发现 {len(alert_vulns)} 个高危漏洞", html_body)
         except Exception as e:
-            print(f"[Notification] Alert send failed: {e}")
+            logger.error(f"[Notification] Alert send failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════
@@ -739,7 +741,7 @@ def send_im_alert(db_path: str, alert_id: int, project_name: str, tool_name: str
             cid = ch["id"]
             ctype = ch["channel_type"]
             if not _should_send(cid, "scan_alert"):
-                print(f"[IM] Channel {ctype}#{cid}: suppressed (dedup)")
+                logger.info(f"[IM] Channel {ctype}#{cid}: suppressed (dedup)")
                 continue
 
             webhook_url = ch["webhook_url"]
@@ -756,8 +758,8 @@ def send_im_alert(db_path: str, alert_id: int, project_name: str, tool_name: str
                     continue
 
                 status = "OK" if success else f"FAIL: {msg[:80]}"
-                print(f"[IM] {ctype}#{cid}: {status}")
+                logger.info(f"[IM] {ctype}#{cid}: {status}")
             except Exception as e:
-                print(f"[IM] {ctype}#{cid} error: {e}")
+                logger.error(f"[IM] {ctype}#{cid} error: {e}")
     except Exception as e:
-        print(f"[IM] send_im_alert failed: {e}")
+        logger.error(f"[IM] send_im_alert failed: {e}")

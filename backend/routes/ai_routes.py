@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import json
 import sqlite3
 import os
@@ -1414,7 +1416,7 @@ def chat():
             db.commit()
     except Exception as e:
         # 落库失败不影响正常返回
-        print(f"[AI chat history] 保存失败: {e}", flush=True)
+        logger.error(f"[AI chat history] 保存失败: {e}")
 
     return jsonify({
         "reply": ai_response,

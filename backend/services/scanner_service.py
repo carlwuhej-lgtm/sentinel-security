@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 哨兵安全平台 — 扫描编排服务
 
@@ -127,7 +129,7 @@ def _pregenerate_ai_fix(vuln: dict, timeout: int = 3) -> str:
             return ""
         return resp.strip()
     except Exception as e:
-        print(f"[ScannerService] _pregenerate_ai_fix failed (non-blocking): {e}", flush=True)
+        logger.error(f"[ScannerService] _pregenerate_ai_fix failed (non-blocking): {e}")
         return ""
 
 
@@ -335,8 +337,8 @@ def execute_scan(
                 (scan_id,),
             )
             db.commit()
-            print(f"[ScannerService] scanner instance={scanner!r}, class={scanner.__class__}, module={scanner.__class__.__module__}", flush=True)
-            print(f"[ScannerService] project_config local_path={project_config.get('local_path')}", flush=True)
+            logger.info(f"[ScannerService] scanner instance={scanner!r}, class={scanner.__class__}, module={scanner.__class__.__module__}")
+            logger.info(f"[ScannerService] project_config local_path={project_config.get('local_path')}")
 
             # ── DAST 多目标：target_url 可含多个 URL（换行/逗号/分号分隔），逐个扫描并合并 ──
             targets = _parse_targets(project_config.get("target_url", ""))
@@ -356,7 +358,7 @@ def execute_scan(
                 (scan_id,),
             )
             db.commit()
-            print(f"[ScannerService] scan_result status={getattr(scan_result, 'status', None)}, vulns={len(getattr(scan_result, 'vulnerabilities', []) or [])}, raw={getattr(scan_result, 'raw_output', '')[:200]}", flush=True)
+            logger.info(f"[ScannerService] scan_result status={getattr(scan_result, 'status', None)}, vulns={len(getattr(scan_result, 'vulnerabilities', []) or [])}, raw={getattr(scan_result, 'raw_output', '')[:200]}")
         except Exception as e:
             db.execute(
                 "UPDATE scan_tasks SET status='failed', finished_at=datetime('now','localtime') WHERE id=?",
@@ -451,7 +453,7 @@ def execute_scan(
                 {"duration_ms": scan_result.duration_ms, "summary": scan_result.summary},
             )
         except Exception as e:
-            print(f"[ScannerService] Alert failed (non-blocking): {e}")
+            logger.error(f"[ScannerService] Alert failed (non-blocking): {e}")
 
         # 7b. 生成告警记录 + IM 通知
         try:
@@ -471,7 +473,7 @@ def execute_scan(
                         len(vuln_dicts), critical_count, high_count
                     )
         except Exception as e:
-            print(f"[ScannerService] Alert generation failed (non-blocking): {e}")
+            logger.error(f"[ScannerService] Alert generation failed (non-blocking): {e}")
 
         # 8. 返回结果
         scan = db.execute(
@@ -540,18 +542,18 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
             # 进度：开始扫描
             _db_execute_retry(db, "UPDATE scan_tasks SET progress=15, progress_message='正在执行代码扫描...' WHERE id=?", (scan_id,))
             db.commit()
-            print(f"[ScannerService] bg_scanner instance={scanner!r}, class={scanner.__class__}", flush=True)
+            logger.info(f"[ScannerService] bg_scanner instance={scanner!r}, class={scanner.__class__}")
             scan_result = scanner.run(project_config)
             # 进度：扫描完成
             _db_execute_retry(db, "UPDATE scan_tasks SET progress=75, progress_message='正在分析扫描结果...' WHERE id=?", (scan_id,))
             db.commit()
-            print(f"[ScannerService] bg_scan #{scan_id}: scanner.run() returned, status={scan_result.status}, vulns={len(scan_result.vulnerabilities)}", flush=True)
+            logger.info(f"[ScannerService] bg_scan #{scan_id}: scanner.run() returned, status={scan_result.status}, vulns={len(scan_result.vulnerabilities)}")
         except Exception as e:
             _db_execute_retry(db,
                 "UPDATE scan_tasks SET status='failed', finished_at=datetime('now','localtime'), error=?, progress_message='扫描执行异常' WHERE id=?",
                 (str(e)[:500], scan_id))
             db.commit()
-            print(f"[ScannerService] Background scan #{scan_id} exception: {e}", flush=True)
+            logger.info(f"[ScannerService] Background scan #{scan_id} exception: {e}")
             import traceback
             traceback.print_exc()
             return
@@ -564,10 +566,10 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
                 (now, getattr(scan_result, "raw_output", ""), scan_id),
             )
             db.commit()
-            print(f"[ScannerService] bg_scan #{scan_id}: scan failed, status={scan_result.status}", flush=True)
+            logger.error(f"[ScannerService] bg_scan #{scan_id}: scan failed, status={scan_result.status}")
             return
 
-        print(f"[ScannerService] bg_scan #{scan_id}: saving {len(scan_result.vulnerabilities)} vulns...", flush=True)
+        logger.info(f"[ScannerService] bg_scan #{scan_id}: saving {len(scan_result.vulnerabilities)} vulns...")
 
         # 进度：入库中
         _db_execute_retry(db, "UPDATE scan_tasks SET progress=85, progress_message='正在保存漏洞数据...' WHERE id=?", (scan_id,))
@@ -577,7 +579,7 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
         vuln_dicts = []
         for v in scan_result.vulnerabilities:
             vd = v.to_dict()
-            print(f"[ScannerService] bg_scan #{scan_id}: pre AI fix for {vd['title'][:40]}...", flush=True)
+            logger.info(f"[ScannerService] bg_scan #{scan_id}: pre AI fix for {vd['title'][:40]}...")
             ai_fix = _pregenerate_ai_fix({
                 "title": vd["title"],
                 "severity": vd["severity"],
@@ -586,7 +588,7 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
                 "file_path": vd["file_path"],
                 "line": vd["line"],
             })
-            print(f"[ScannerService] bg_scan #{scan_id}: inserting vuln {vd['title'][:40]}...", flush=True)
+            logger.info(f"[ScannerService] bg_scan #{scan_id}: inserting vuln {vd['title'][:40]}...")
             _db_execute_retry(db,
                 """INSERT INTO vulnerabilities
                    (scan_id, cve_id, title, severity, file_path, line, source_tool,
@@ -642,7 +644,7 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
                 {"duration_ms": getattr(scan_result, "duration_ms", 0), "summary": getattr(scan_result, "summary", "")},
             )
         except Exception as e:
-            print(f"[ScannerService] Alert failed (non-blocking): {e}")
+            logger.error(f"[ScannerService] Alert failed (non-blocking): {e}")
 
         try:
             critical_count = sum(1 for v in vuln_dicts if v.get("severity", "").lower() == "critical")
@@ -654,12 +656,12 @@ def _execute_scan_in_thread(scan_id: int, project_id: int, tool_type: str, trigg
                     len(vuln_dicts), critical_count, high_count
                 )
         except Exception as e:
-            print(f"[ScannerService] Alert generation failed (non-blocking): {e}")
+            logger.error(f"[ScannerService] Alert generation failed (non-blocking): {e}")
 
-        print(f"[ScannerService] Background scan #{scan_id} completed: {len(vuln_dicts)} vulns found", flush=True)
+        logger.info(f"[ScannerService] Background scan #{scan_id} completed: {len(vuln_dicts)} vulns found")
 
     except Exception as e:
-        print(f"[ScannerService] Background scan #{scan_id} fatal exception: {e}", flush=True)
+        logger.info(f"[ScannerService] Background scan #{scan_id} fatal exception: {e}")
         import traceback
         traceback.print_exc()
         try:
@@ -755,8 +757,8 @@ def scan_for_schedule(project_id: int, tool_type: str, schedule_id: int) -> Tupl
     )
     if success:
         msg = f"定时扫描已提交: project={project_id}, tool={tool_type}, scan_id={result.get('id')}"
-        print(f"[ScannerService] {msg}")
+        logger.info(f"[ScannerService] {msg}")
         return True, msg, ""
     else:
-        print(f"[ScannerService] 定时扫描失败: {error}")
+        logger.error(f"[ScannerService] 定时扫描失败: {error}")
         return False, error, error

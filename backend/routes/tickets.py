@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # ─── 工单管理 API ───
 """
 简易工单系统：创建、分配、状态流转、评论
@@ -45,9 +47,9 @@ def _push_ticket_feishu(ticket, event="created"):
         )
         for ch in channels:
             ok, msg = _send_feishu(ch["webhook_url"], title, content, ch["secret"] or "")
-            print(f"[Ticket] feishu push -> {str(ch['webhook_url'])[:40]}: {'OK' if ok else msg[:80]}", flush=True)
+            logger.info(f"[Ticket] feishu push -> {str(ch['webhook_url'])[:40]}: {'OK' if ok else msg[:80]}")
     except Exception as e:
-        print(f"[Ticket] feishu push error: {e}", flush=True)
+        logger.error(f"[Ticket] feishu push error: {e}")
 
 
 # ══════════════════════════════════════════════

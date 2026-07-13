@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 哨兵安全平台 — 定时扫描调度服务
 
@@ -90,7 +92,7 @@ def migrate_scheduler(conn: sqlite3.Connection):
     """)
 
     conn.commit()
-    print("[Scheduler] Migration Phase 4 completed")
+    logger.info("[Scheduler] Migration Phase 4 completed")
 
 
 # ═══════════════════════════════════════════════════════
@@ -127,7 +129,7 @@ def init_scheduler() -> BackgroundScheduler:
     _load_all_schedules()
 
     _scheduler.start()
-    print(f"[Scheduler] Started with {len(_scheduler.get_jobs())} schedules")
+    logger.info(f"[Scheduler] Started with {len(_scheduler.get_jobs())} schedules")
 
     return _scheduler
 
@@ -153,7 +155,7 @@ def _add_schedule_job(schedule: dict):
 
     trigger = _build_trigger(schedule)
     if trigger is None:
-        print(f"[Scheduler] Invalid trigger for schedule #{schedule['id']}")
+        logger.info(f"[Scheduler] Invalid trigger for schedule #{schedule['id']}")
         return
 
     job_id = f"scan_schedule_{schedule['id']}"
