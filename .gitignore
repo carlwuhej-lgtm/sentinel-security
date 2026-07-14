@@ -37,6 +37,7 @@ build/
 
 # 日志
 *.log
+*.err
 logs/
 
 # 前端
