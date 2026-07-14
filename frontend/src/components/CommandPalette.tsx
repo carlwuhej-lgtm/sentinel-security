@@ -21,6 +21,7 @@ const PAGES: { label: string; path: string; keywords: string }[] = [
   { label: '事件调查', path: '/investigation', keywords: 'investigation 调查 溯源' },
   { label: 'AI 分析', path: '/ai', keywords: 'ai 分析 大模型' },
   { label: '知识库', path: '/knowledge-base', keywords: 'knowledge 知识 文档' },
+  { label: '技能中心', path: '/skills', keywords: 'skill 技能 智能体 封装' },
   { label: '项目管理', path: '/projects', keywords: 'project 项目 仓库' },
   { label: '工具集成', path: '/tools', keywords: 'tool 工具 集成 semgrep' },
   { label: '资产管理', path: '/assets', keywords: 'asset 资产 组件' },

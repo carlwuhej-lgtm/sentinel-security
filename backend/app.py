@@ -1043,6 +1043,7 @@ def create_app():
     from routes.tickets import tickets_bp
     from routes.email import email_bp
     from routes.knowledge_base import knowledge_base_bp
+    from routes.skills import skills_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(dashboard_bp, url_prefix="/api/dashboard")
@@ -1063,6 +1064,7 @@ def create_app():
     app.register_blueprint(tickets_bp, url_prefix="/api/tickets")
     app.register_blueprint(email_bp, url_prefix="/api/email")
     app.register_blueprint(knowledge_base_bp, url_prefix="/api/knowledge-base")
+    app.register_blueprint(skills_bp, url_prefix="/api/skills")
     app.register_blueprint(api_bp, url_prefix="/api")
 
     # ═══ Phase 1: 安全中间件注册 ═══

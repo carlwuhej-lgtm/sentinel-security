@@ -16,6 +16,7 @@ const zh: Dict = {
   'nav.investigation': '事件调查',
   'nav.ai': 'AI 分析',
   'nav.knowledge': '知识库',
+  'nav.skills': '技能中心',
   'nav.projects': '项目管理',
   'nav.tools': '工具集成',
   'nav.assets': '资产管理',

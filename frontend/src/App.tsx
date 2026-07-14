@@ -20,6 +20,7 @@ import Tickets from './pages/Tickets'
 import KnowledgeBase from './pages/KnowledgeBase'
 import KnowledgeDetail from './pages/KnowledgeDetail'
 import KnowledgeEditor from './pages/KnowledgeEditor'
+import Skills from './pages/Skills'
 import ErrorBoundary from './components/ErrorBoundary'
 import { I18nProvider } from './i18n'
 
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="knowledge-base/new" element={<ErrorBoundary><KnowledgeEditor /></ErrorBoundary>} />
           <Route path="knowledge-base/:id/edit" element={<ErrorBoundary><KnowledgeEditor /></ErrorBoundary>} />
           <Route path="knowledge-base/:id" element={<ErrorBoundary><KnowledgeDetail /></ErrorBoundary>} />
+          <Route path="skills" element={<ErrorBoundary><Skills /></ErrorBoundary>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

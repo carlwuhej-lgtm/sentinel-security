@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import api from '../api/client'
 import {
-  LayoutDashboard, FolderKanban, Search, ShieldAlert, Sparkles,
+  LayoutDashboard, FolderKanban, Search, ShieldAlert, Sparkles, Zap,
   Server, FileCheck, FileBarChart, ScrollText, Wrench, Settings,
   LogOut, Menu, Shield, Key, Users, Bell,
   Target, ClipboardList, Ticket, Eye, BookOpen
@@ -37,6 +37,7 @@ const buildNavGroups = (isAdmin: boolean): { labelKey: string; items: NavItem[] 
       { to: '/investigation', icon: <Eye size={18} />, labelKey: 'nav.investigation' },
       { to: '/ai', icon: <Sparkles size={18} />, labelKey: 'nav.ai' },
       { to: '/knowledge-base', icon: <BookOpen size={18} />, labelKey: 'nav.knowledge' },
+      { to: '/skills', icon: <Zap size={18} />, labelKey: 'nav.skills' },
     ]
   },
   {
