@@ -9,6 +9,7 @@ interface Skill {
   module: string
   source?: string
   approval?: string
+  runner?: { type?: string }
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -47,12 +48,21 @@ export default function Skills() {
   const [language, setLanguage] = useState('general')
   const [error, setError] = useState('')
 
-  // 上传弹窗状态
+  // 上传技能弹窗状态
   const [uploadOpen, setUploadOpen] = useState(false)
   const [manifestFile, setManifestFile] = useState<File | null>(null)
   const [scriptFile, setScriptFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadMsg, setUploadMsg] = useState('')
+
+  // 接入 MCP 弹窗状态
+  const [mcpOpen, setMcpOpen] = useState(false)
+  const [mcpForm, setMcpForm] = useState({
+    id: '', name: '', description: '', risk: 'low',
+    transport: 'stdio', command: '', args: '', url: '', tool: '', timeout: '20',
+  })
+  const [mcpMsg, setMcpMsg] = useState('')
+  const [mcpSubmitting, setMcpSubmitting] = useState(false)
 
   useEffect(() => { loadSkills() }, [])
 
@@ -114,21 +124,68 @@ export default function Skills() {
     }
   }
 
+  const onMcpSubmit = async () => {
+    if (!mcpForm.id.trim() || !mcpForm.name.trim() || !mcpForm.tool.trim()) {
+      setMcpMsg('请填写 id / 名称 / tool 名称')
+      return
+    }
+    setMcpSubmitting(true)
+    setMcpMsg('')
+    const runner: any = {
+      type: 'mcp',
+      transport: mcpForm.transport,
+      tool: mcpForm.tool.trim(),
+      timeout: Number(mcpForm.timeout) || 20,
+    }
+    if (mcpForm.transport === 'stdio') {
+      runner.command = mcpForm.command.trim()
+      runner.args = mcpForm.args.split(',').map(s => s.trim()).filter(Boolean)
+    } else {
+      runner.url = mcpForm.url.trim()
+    }
+    const manifest = {
+      id: mcpForm.id.trim(),
+      name: mcpForm.name.trim(),
+      description: mcpForm.description.trim(),
+      risk: mcpForm.risk,
+      runner,
+    }
+    try {
+      const res = await api.post('/skills/upload', { manifest })
+      setMcpMsg(res.data?.message || '已提交，等待管理员审批')
+      setMcpOpen(false)
+      setMcpForm({ id: '', name: '', description: '', risk: 'low', transport: 'stdio', command: '', args: '', url: '', tool: '', timeout: '20' })
+      loadSkills()
+    } catch (e: any) {
+      setMcpMsg(e?.response?.data?.error || '提交失败')
+    } finally {
+      setMcpSubmitting(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="page-title">技能中心</h1>
           <p className="text-sm text-slate-400 mt-1">
-            把平台安全能力封装为可一键调用的「技能」。自己或第三方上传的技能需管理员审批后上架；当前均为低风险能力，不涉及密钥、不出网、不触碰认证与加密。
+            把平台安全能力封装为可一键调用的「技能」。自己或第三方上传/接入的技能需管理员审批后上架；平台作为 MCP Client 连接外部 MCP 时不向其注入任何内部密钥。
           </p>
         </div>
-        <button
-          onClick={() => { setUploadMsg(''); setUploadOpen(true) }}
-          className="btn-primary text-xs whitespace-nowrap"
-        >
-          + 上传技能
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setUploadMsg(''); setUploadOpen(true) }}
+            className="btn-primary text-xs whitespace-nowrap"
+          >
+            + 上传技能
+          </button>
+          <button
+            onClick={() => { setMcpMsg(''); setMcpOpen(true) }}
+            className="text-xs px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:bg-white/5 whitespace-nowrap"
+          >
+            + 接入 MCP
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -156,6 +213,7 @@ export default function Skills() {
                 <p className="text-sm text-slate-400 mt-2 flex-1">{s.description}</p>
                 <p className="text-xs text-slate-500 mt-2">
                   来源：{SOURCE_LABEL[s.source || ''] || s.source || '内置'}
+                  {s.runner?.type === 'mcp' && <span className="text-sky-300"> · MCP（外部）</span>}
                   {pending && <span className="text-amber-300"> · 待审批</span>}
                   {rejected && <span className="text-red-300"> · 已拒绝</span>}
                 </p>
@@ -210,7 +268,7 @@ export default function Skills() {
       {result && (
         <div className="rounded-2xl bg-surface-900/80 border border-primary-500/15 p-5">
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-emerald-400 text-sm font-medium">✓ {result.message}</span>
+            <span className="text-emerald-400 text-sm font-medium">✓ 技能运行完成</span>
           </div>
 
           {result.skill === 'code-audit' && (
@@ -233,6 +291,15 @@ export default function Skills() {
               共处理 <span className="text-slate-100 font-semibold">{result.total}</span> 个漏洞，
               本次修正定级 <span className="text-slate-100 font-semibold">{result.updated}</span> 个。
               前往「漏洞管理」页可看到更新后的 severity 标记。
+            </div>
+          )}
+
+          {result.external && (
+            <div className="space-y-1 max-h-80 overflow-auto">
+              <p className="text-xs text-slate-400">外部 MCP 返回（{result.transport} / tool: {result.tool}）：</p>
+              {(result.result || []).map((t: string, i: number) => (
+                <pre key={i} className="text-[11px] text-slate-300 bg-surface-800/60 border border-white/[0.03] rounded-lg px-3 py-2 whitespace-pre-wrap">{t}</pre>
+              ))}
             </div>
           )}
 
@@ -288,6 +355,102 @@ export default function Skills() {
               </button>
               <button onClick={onUpload} disabled={uploading} className="btn-primary text-xs">
                 {uploading ? '上传中…' : '提交审批'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 接入 MCP 弹窗 */}
+      {mcpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setMcpOpen(false)}>
+          <div
+            className="w-full max-w-lg rounded-2xl bg-surface-900 border border-white/10 p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-100">接入外部 MCP</h3>
+              <button onClick={() => setMcpOpen(false)} className="text-slate-400 hover:text-slate-200 text-lg leading-none">×</button>
+            </div>
+            <p className="text-xs text-slate-400">
+              填写别人写好的 MCP Server 启动方式。提交后进入「待审批」，管理员通过后才上架。平台作为 MCP Client 连接它并调用声明的 tool（不向其注入内部密钥）。
+            </p>
+
+            <div className="space-y-3 max-h-[68vh] overflow-auto pr-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-300">技能 ID <span className="text-red-400">*</span></label>
+                  <input value={mcpForm.id} onChange={(e) => setMcpForm({ ...mcpForm, id: e.target.value })}
+                    placeholder="vendor-cve-mcp" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300">名称 <span className="text-red-400">*</span></label>
+                  <input value={mcpForm.name} onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })}
+                    placeholder="某厂商 CVE 情报" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-300">描述</label>
+                <input value={mcpForm.description} onChange={(e) => setMcpForm({ ...mcpForm, description: e.target.value })}
+                  placeholder="一句话说明这个 MCP 做什么" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-300">传输方式</label>
+                <div className="mt-1 flex gap-2">
+                  {(['stdio', 'sse'] as const).map((t) => (
+                    <button key={t} onClick={() => setMcpForm({ ...mcpForm, transport: t })}
+                      className={`text-xs px-3 py-1.5 rounded-lg border ${mcpForm.transport === t ? 'bg-primary-500/20 text-primary-200 border-primary-500/30' : 'border-white/10 text-slate-300'}`}>
+                      {t === 'stdio' ? 'stdio 本地进程' : 'sse 远程'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {mcpForm.transport === 'stdio' ? (
+                <>
+                  <div>
+                    <label className="text-xs text-slate-300">启动命令 command <span className="text-red-400">*</span></label>
+                    <input value={mcpForm.command} onChange={(e) => setMcpForm({ ...mcpForm, command: e.target.value })}
+                      placeholder="npx" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-300">参数 args（逗号分隔）</label>
+                    <input value={mcpForm.args} onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })}
+                      placeholder="-y, @vendor/cve-mcp" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="text-xs text-slate-300">连接地址 url (http/https) <span className="text-red-400">*</span></label>
+                  <input value={mcpForm.url} onChange={(e) => setMcpForm({ ...mcpForm, url: e.target.value })}
+                    placeholder="http://localhost:8000/sse" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-300">要调用的 tool 名 <span className="text-red-400">*</span></label>
+                  <input value={mcpForm.tool} onChange={(e) => setMcpForm({ ...mcpForm, tool: e.target.value })}
+                    placeholder="get_cve" className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300">超时（秒）</label>
+                  <input value={mcpForm.timeout} onChange={(e) => setMcpForm({ ...mcpForm, timeout: e.target.value })}
+                    className="mt-1 block w-full bg-surface-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+                </div>
+              </div>
+            </div>
+
+            {mcpMsg && (
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs px-3 py-2">
+                {mcpMsg}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button onClick={() => setMcpOpen(false)} className="text-xs px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:bg-white/5">
+                取消
+              </button>
+              <button onClick={onMcpSubmit} disabled={mcpSubmitting} className="btn-primary text-xs">
+                {mcpSubmitting ? '提交中…' : '提交审批'}
               </button>
             </div>
           </div>
