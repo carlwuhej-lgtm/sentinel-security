@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>哨兵安全管理平台 Sentinel · 应用安全全生命周期守护者</title>
+<meta name="description" content="哨兵（Sentinel）是一款面向开发团队的应用安全全生命周期管理平台，覆盖项目管理、SAST / SCA / DAST / 密钥检测、漏洞闭环、事件调查、告警中心、AI 双引擎、资产管理、规则与工具扩展、合规报告与审计治理。" />
+<style>
+  :root{
+    --bg:#060914;
+    --bg-2:#0a0f1f;
+    --surface:rgba(255,255,255,.04);
+    --surface-2:rgba(255,255,255,.06);
+    --border:rgba(255,255,255,.10);
+    --border-soft:rgba(255,255,255,.06);
+    --text:#e7eef8;
+    --muted:#9fb0c9;
+    --faint:#65788f;
+    --cyan:#22d3ee;
+    --blue:#3b82f6;
+    --purple:#a855f7;
+    --violet:#8b5cf6;
+    --ink:#060914;
+    --crit:#ff4d6d;
+    --high:#ff9f43;
+    --med:#ffd60a;
+    --low:#22c55e;
+    --info:#7c8aa5;
+    --grad:linear-gradient(120deg,#22d3ee 0%,#6366f1 50%,#a855f7 100%);
+    --grad-soft:linear-gradient(120deg,rgba(34,211,238,.16),rgba(168,85,247,.16));
+    --shadow:0 18px 50px -22px rgba(0,0,0,.75);
+    --r:18px;
+    --maxw:1180px;
+    --font:"Segoe UI",-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    --mono:"SF Mono",ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-2;
+    background:
+      radial-gradient(900px 520px at 12% -8%,rgba(34,211,238,.14),transparent 60%),
+      radial-gradient(820px 520px at 92% 4%,rgba(168,85,247,.13),transparent 60%),
+      radial-gradient(700px 500px at 50% 108%,rgba(59,130,246,.10),transparent 60%),
+      var(--bg);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:-1;opacity:.5;
+    background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+    background-size:46px 46px;
+    -webkit-mask-image:radial-gradient(circle at 50% 30%,#000,transparent 78%);
+    mask-image:radial-gradient(circle at 50% 30%,#000,transparent 78%);
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  .grad-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);font-weight:600;margin-bottom:14px}
+  .eyebrow::before{content:"";width:26px;height:1px;background:linear-gradient(90deg,var(--cyan),transparent)}
+  .h2{font-size:clamp(26px,3.4vw,40px);font-weight:750;letter-spacing:-.5px;line-height:1.15;margin-bottom:14px}
+  .lead{color:var(--muted);font-size:16.5px;max-width:720px}
+  section{padding:84px 0;border-top:1px solid var(--border-soft)}
+  section:first-of-type{border-top:none}
+
+  /* ---------- nav ---------- */
+  header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(6,9,20,.72);border-bottom:1px solid var(--border-soft)}
+  .nav-in{max-width:var(--maxw);margin:0 auto;padding:13px 22px;display:flex;align-items:center;gap:18px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:750;letter-spacing:.5px;white-space:nowrap}
+  .brand .logo{width:34px;height:34px;flex:0 0 auto;filter:drop-shadow(0 4px 10px rgba(34,211,238,.35))}
+  .brand small{display:block;font-size:10.5px;letter-spacing:.28em;color:var(--faint);font-weight:600}
+  .nav-links{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+  .nav-links a{font-size:13px;color:var(--muted);padding:7px 11px;border-radius:9px;transition:.18s;white-space:nowrap}
+  .nav-links a:hover{color:var(--text);background:var(--surface)}
+  .nav-cta{font-size:13px;font-weight:650;padding:8px 16px;border-radius:10px;background:var(--grad);color:#fff;white-space:nowrap;box-shadow:0 8px 22px -8px rgba(99,102,241,.7)}
+  @media(max-width:880px){.nav-links{display:none}}
+
+  /* ---------- hero ---------- */
+  .hero{padding:70px 0 56px;text-align:center;position:relative}
+  .badge{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--cyan);border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);padding:6px 14px;border-radius:999px;margin-bottom:22px}
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+  .hero h1{font-size:clamp(34px,5.6vw,62px);line-height:1.05;font-weight:800;letter-spacing:-1px;margin-bottom:18px}
+  .hero p.sub{color:var(--muted);font-size:clamp(15px,1.9vw,19px);max-width:680px;margin:0 auto 34px}
+  .hero-actions{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:46px}
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:13px 26px;border-radius:12px;font-weight:650;font-size:15px;transition:.2s;border:1px solid transparent}
+  .btn.primary{background:var(--grad);color:#fff;box-shadow:0 14px 34px -12px rgba(99,102,241,.8)}
+  .btn.primary:hover{transform:translateY(-2px)}
+  .btn.ghost{border-color:var(--border);color:var(--text);background:var(--surface)}
+  .btn.ghost:hover{background:var(--surface-2)}
+
+  /* hero dashboard mock */
+  .dash{max-width:880px;margin:0 auto;text-align:left;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:22px;padding:26px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .dash::before{content:"";position:absolute;inset:0;background:radial-gradient(600px 200px at 80% -20%,rgba(168,85,247,.12),transparent 70%)}
+  .dash-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;position:relative}
+  .dash-top h3{font-size:15px;font-weight:650;display:flex;align-items:center;gap:9px}
+  .dash-top .live{font-size:11px;color:var(--low);display:flex;align-items:center;gap:6px}
+  .dash-top .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--low);box-shadow:0 0 8px var(--low)}
+  .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;position:relative}
+  .kpi{background:rgba(255,255,255,.035);border:1px solid var(--border-soft);border-radius:14px;padding:15px}
+  .kpi .lbl{font-size:11.5px;color:var(--faint);margin-bottom:7px}
+  .kpi .val{font-size:27px;font-weight:780;font-family:var(--mono);letter-spacing:-.5px}
+  .kpi .val.c{color:var(--crit)} .kpi .val.h{color:var(--high)} .kpi .val.m{color:var(--med)} .kpi .val.l{color:var(--low)}
+  .kpi .bar{height:5px;border-radius:3px;background:rgba(255,255,255,.08);margin-top:10px;overflow:hidden}
+  .kpi .bar i{display:block;height:100%;border-radius:3px;background:var(--grad);width:0;transition:width 1.1s ease}
+  .kpi.c .bar i{background:var(--crit)} .kpi.h .bar i{background:var(--high)} .kpi.m .bar i{background:var(--med)} .kpi.l .bar i{background:var(--low)}
+  .dash-foot{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:16px;position:relative}
+  .mini{background:rgba(255,255,255,.03);border:1px solid var(--border-soft);border-radius:14px;padding:15px}
+  .mini .t{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .cov{display:flex;flex-direction:column;gap:9px}
+  .cov .row{display:flex;align-items:center;gap:10px;font-size:12.5px}
+  .cov .row span:first-child{width:54px;color:var(--faint)}
+  .cov .track{flex:1;height:7px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden}
+  .cov .track i{display:block;height:100%;background:var(--grad);width:0;transition:width 1.2s ease}
+  .cov .row b{width:38px;text-align:right;font-family:var(--mono);color:var(--text);font-weight:600}
+  .donut-wrap{display:flex;align-items:center;gap:14px}
+  .donut-wrap .leg{display:flex;flex-direction:column;gap:6px;font-size:12px}
+  .donut-wrap .leg div{display:flex;align-items:center;gap:7px;color:var(--muted)}
+  .donut-wrap .leg i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  @media(max-width:720px){.kpi-row{grid-template-columns:repeat(2,1fr)}.dash-foot{grid-template-columns:1fr}.hero{padding:48px 0}}
+
+  /* ---------- stat strip ---------- */
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft);border-radius:18px;overflow:hidden}
+  .stat{background:var(--bg-2);padding:22px 14px;text-align:center}
+  .stat .n{font-size:32px;font-weight:800;font-family:var(--mono);background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-1px}
+  .stat .c{font-size:12.5px;color:var(--muted);margin-top:4px}
+  @media(max-width:780px){.stats{grid-template-columns:repeat(3,1fr)}}
+
+  /* ---------- module map ---------- */
+  .groups{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:36px}
+  .group{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:20px}
+  .group h4{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;margin-bottom:4px}
+  .group h4 .tag{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--cyan);border:1px solid rgba(34,211,238,.28);padding:2px 8px;border-radius:6px}
+  .group .desc{font-size:12px;color:var(--faint);margin-bottom:14px}
+  .mods{display:flex;flex-direction:column;gap:9px}
+  .mod{display:flex;align-items:flex-start;gap:11px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.025);border:1px solid var(--border-soft);transition:.18s}
+  .mod:hover{background:var(--surface-2);border-color:var(--border);transform:translateX(2px)}
+  .mod .ico{width:30px;height:30px;flex:0 0 auto;color:var(--cyan);background:var(--grad-soft);border-radius:8px;padding:6px;margin-top:1px}
+  .mod .mt{font-size:13.5px;font-weight:600}
+  .mod .md{font-size:11.5px;color:var(--faint);line-height:1.4}
+  .mod .mp{font-size:10.5px;color:var(--info);font-family:var(--mono);margin-top:2px}
+  @media(max-width:880px){.groups{grid-template-columns:1fr}}
+
+  /* ---------- generic grids ---------- */
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:36px}
+  .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:36px}
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:34px}
+  .card{background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--r);padding:22px;transition:.2s;position:relative;overflow:hidden}
+  .card:hover{border-color:var(--border);transform:translateY(-3px);box-shadow:var(--shadow)}
+  .card .ico{width:42px;height:42px;color:var(--cyan);background:var(--grad-soft);border-radius:11px;padding:9px;margin-bottom:14px}
+  .card h3{font-size:16.5px;font-weight:700;margin-bottom:7px}
+  .card p{font-size:13.5px;color:var(--muted);line-height:1.6}
+  .card .feat{list-style:none;margin-top:12px;display:flex;flex-direction:column;gap:7px}
+  .card .feat li{font-size:12.5px;color:var(--muted);display:flex;gap:8px;align-items:flex-start}
+  .card .feat li svg{width:15px;height:15px;flex:0 0 auto;color:var(--low);margin-top:3px}
+  @media(max-width:880px){.grid-3,.grid-2{grid-template-columns:1fr}.grid-4{grid-template-columns:repeat(2,1fr)}}
+
+  /* ---------- pipeline ---------- */
+  .pipe{display:flex;flex-wrap:wrap;gap:0;margin-top:36px;align-items:stretch}
+  .step{flex:1;min-width:160px;position:relative;padding:18px 18px 18px 0}
+  .step .num{width:30px;height:30px;border-radius:9px;background:var(--grad-soft);color:var(--cyan);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;border:1px solid rgba(34,211,238,.25)}
+  .step h4{font-size:14.5px;font-weight:700;margin-bottom:5px}
+  .step p{font-size:12.5px;color:var(--muted)}
+  .step:not(:last-child)::after{content:"";position:absolute;top:33px;right:14px;width:24px;height:2px;background:linear-gradient(90deg,var(--border),var(--cyan));opacity:.5}
+  @media(max-width:780px){.step{min-width:50%;border-bottom:1px solid var(--border-soft);padding-bottom:22px}.step::after{display:none}}
+
+  /* ---------- scan types ---------- */
+  .scan-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:34px}
+  .scan{background:var(--surface);border:1px solid var(--border-soft);border-radius:15px;padding:20px;transition:.2s}
+  .scan:hover{border-color:var(--border);transform:translateY(-3px)}
+  .scan .badge-t{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--cyan);font-family:var(--mono)}
+  .scan h4{font-size:16px;font-weight:700;margin:10px 0 6px}
+  .scan p{font-size:12.5px;color:var(--muted)}
+  @media(max-width:780px){.scan-grid{grid-template-columns:repeat(2,1fr)}}
+
+  /* ---------- table ---------- */
+  .tbl-wrap{margin-top:32px;border:1px solid var(--border-soft);border-radius:16px;overflow:hidden;background:var(--surface)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{background:rgba(255,255,255,.04);text-align:left;padding:14px 16px;font-weight:650;color:var(--muted);font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid var(--border-soft)}
+  tbody td{padding:13px 16px;border-bottom:1px solid var(--border-soft);color:var(--text);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(255,255,255,.025)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:999px;font-family:var(--mono)}
+  .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .sw.c{background:var(--crit)} .sw.h{background:var(--high)} .sw.m{background:var(--med)} .sw.l{background:var(--low)} .sw.i{background:var(--info)}
+  .yk{color:var(--low)} .nk{color:var(--faint)}
+  .mono{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+  @media(max-width:760px){.tbl-wrap{overflow-x:auto}table{min-width:560px}}
+
+  /* ---------- two-col feature ---------- */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:center;margin-top:30px}
+  .split.rev{direction:rtl} .split.rev>*{direction:ltr}
+  @media(max-width:880px){.split,.split.rev{grid-template-columns:1fr;direction:ltr}}
+  .panel{background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.015));border:1px solid var(--border);border-radius:18px;padding:24px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .panel::before{content:"";position:absolute;inset:0;background:radial-gradient(420px 160px at 85% -10%,rgba(34,211,238,.12),transparent 70%)}
+  .panel .ph{font-size:12px;color:var(--cyan);font-weight:600;letter-spacing:.1em;margin-bottom:14px;position:relative}
+  .list-line{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed var(--border-soft);position:relative;font-size:13.5px;color:var(--muted)}
+  .list-line:last-child{border-bottom:none}
+  .list-line svg{width:17px;height:17px;flex:0 0 auto;color:var(--cyan);margin-top:2px}
+  .list-line b{color:var(--text);font-weight:600}
+
+  /* investigation 3-col */
+  .tri{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}
+  .tri .col{background:var(--surface);border:1px solid var(--border-soft);border-radius:14px;padding:16px}
+  .tri .col h4{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--text)}
+  .tri .col .ic{width:26px;height:26px;color:var(--cyan);background:var(--grad-soft);border-radius:7px;padding:5px}
+  .tri .col .line{font-size:12px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border-soft)}
+  .tri .col .line:last-child{border-bottom:none}
+
+  /* AI chat mock */
+  .chat{display:flex;flex-direction:column;gap:12px;position:relative}
+  .bubble{max-width:86%;padding:12px 15px;border-radius:14px;font-size:13px;line-height:1.55}
+  .bubble.u{align-self:flex-end;background:var(--grad);color:#fff;border-bottom-right-radius:4px}
+  .bubble.a{align-self:flex-start;background:rgba(255,255,255,.05);border:1px solid var(--border-soft);border-bottom-left-radius:4px}
+  .bubble.a .who{font-size:11px;color:var(--cyan);font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+  .bubble.a .who svg{width:14px;height:14px}
+  .bubble.a ul{margin:6px 0 0;padding-left:16px;color:var(--muted)}
+  .bubble.a li{margin:3px 0}
+
+  /* workflow */
+  .flow{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:22px;margin-top:22px}
+  .flow h4{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:9px;color:var(--text)}
+  .flow h4 .ico{width:28px;height:28px;color:var(--cyan);background:var(--grad-soft);border-radius:8px;padding:6px}
+  .steps{display:flex;flex-wrap:wrap;gap:8px}
+  .steps .s{font-size:12.5px;background:rgba(255,255,255,.04);border:1px solid var(--border-soft);border-radius:10px;padding:9px 13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .steps .s b{color:var(--cyan);font-family:var(--mono);font-size:11px}
+  .steps .arr{color:var(--faint);display:flex;align-items:center;font-size:16px}
+  @media(max-width:680px){.steps .arr{display:none}.steps{flex-direction:column}.steps .s{width:100%}}
+
+  /* tech stack */
+  .stack{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
+  .chip{font-size:12.5px;color:var(--muted);background:var(--surface);border:1px solid var(--border-soft);border-radius:999px;padding:8px 15px;display:flex;align-items:center;gap:8px;transition:.18s}
+  .chip:hover{border-color:var(--border);color:var(--text)}
+  .chip svg{width:16px;height:16px;color:var(--cyan)}
+
+  /* principles */
+  .prin{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:34px}
+  .prin .p{background:var(--surface);border:1px solid var(--border-soft);border-radius:15px;padding:20px;text-align:center}
+  .prin .p .ico{width:40px;height:40px;color:var(--cyan);background:var(--grad-soft);border-radius:11px;padding:9px;margin:0 auto 13px}
+  .prin .p h4{font-size:14px;font-weight:700;margin-bottom:6px}
+  .prin .p p{font-size:12px;color:var(--muted)}
+  @media(max-width:880px){.prin{grid-template-columns:repeat(2,1fr)}}
+
+  /* CTA */
+  .cta{text-align:center;padding:90px 0}
+  .cta-box{max-width:820px;margin:0 auto;background:linear-gradient(180deg,rgba(34,211,238,.08),rgba(168,85,247,.06));border:1px solid var(--border);border-radius:26px;padding:54px 30px;position:relative;overflow:hidden;box-shadow:var(--shadow)}
+  .cta-box::before{content:"";position:absolute;inset:0;background:radial-gradient(500px 200px at 50% -30%,rgba(34,211,238,.16),transparent 70%)}
+  .cta-box h2{font-size:clamp(26px,3.6vw,38px);font-weight:780;letter-spacing:-.5px;margin-bottom:14px;position:relative}
+  .cta-box p{color:var(--muted);font-size:16px;margin-bottom:28px;position:relative}
+
+  footer{border-top:1px solid var(--border-soft);padding:46px 0 40px;color:var(--faint);font-size:13px}
+  .foot-in{max-width:var(--maxw);margin:0 auto;padding:0 22px;display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;align-items:flex-start}
+  .foot-in .col h5{color:var(--text);font-size:13.5px;font-weight:650;margin-bottom:12px}
+  .foot-in .col a{display:block;color:var(--faint);font-size:12.5px;padding:4px 0;transition:.15s}
+  .foot-in .col a:hover{color:var(--cyan)}
+  .foot-bot{max-width:var(--maxw);margin:30px auto 0;padding:18px 22px 0;border-top:1px solid var(--border-soft);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;font-size:12px}
+
+  .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+  .d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}.d4{transition-delay:.32s}.d5{transition-delay:.4s}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.kpi .bar i,.cov .track i{transition:none}}
+</style>
+</head>
+<body>
+
+<!-- ===== icon sprite ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+<symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></symbol>
+<symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12l6-4M12 3v2M12 19v2M3 12h2M19 12h2"/></symbol>
+<symbol id="i-bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M5 8l3 2M19 8l-3 2M5 16l3-2M19 16l-3-2M8 21c1.5-2 6.5-2 8 0M7 12h10M9 12c0 4 1.5 6 3 7 1.5-1 3-3 3-7"/></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M13.5 21a2 2 0 0 1-3 0"/></symbol>
+<symbol id="i-ticket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8z"/><path d="M14 6v12" stroke-dasharray="2 2"/></symbol>
+<symbol id="i-robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M8.5 13h.01M15.5 13h.01M9 16h6"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-5A8 8 0 1 1 21 12z"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11M19 7h1M4 17h1M9 17h11M4 12h6M14 12h6"/><circle cx="17" cy="7" r="2"/><circle cx="7" cy="17" r="2"/><circle cx="12" cy="12" r="2"/></symbol>
+<symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+<symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6a3.5 3.5 0 0 0-4.6 4.2L4 16.1 7.9 20l5.9-5.9A3.5 3.5 0 0 0 18 9.5l-2.5 2.5-3-3L15 6.5a3.5 3.5 0 0 0-.5-.5z"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M21 20a5.5 5.5 0 0 0-4-5.3"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h6"/></symbol>
+<symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4V15.6M8.4 6.5h6a2.5 2.5 0 0 1 2.5 2.5v0M8.4 18H14"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-3"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/></symbol>
+<symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+<symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="M11 11l9 9M17 17l2-2M14 14l2-2"/></symbol>
+<symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 15c-1 1-1.5 4-1.5 4s3-.5 4-1.5M14 4c3.5 1.5 6 5 6 9 0 0-3 1-5 1s-3-3-3-5 1-5 1-5z"/><circle cx="14.5" cy="9.5" r="1.6"/></symbol>
+</defs>
+</svg>
+
+<!-- ===== nav ===== -->
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top">
+      <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+      <span>哨兵<small>SENTINEL SECURITY</small></span>
+    </a>
+    <nav class="nav-links">
+      <a href="#map">平台全景</a>
+      <a href="#cap">核心能力</a>
+      <a href="#manage">管理闭环</a>
+      <a href="#invest">调查告警</a>
+      <a href="#ai">智能分析</a>
+      <a href="#asset">资产规则</a>
+      <a href="#report">报告合规</a>
+      <a href="#govern">审计治理</a>
+      <a href="#flow">工作流</a>
+      <a href="#deploy">部署集成</a>
+    </nav>
+    <a class="nav-cta" href="#cta">预约演示</a>
+  </div>
+</header>
+
+<!-- ===== hero ===== -->
+<a id="top"></a>
+<section class="hero">
+  <div class="wrap">
+    <div class="badge"><span class="dot"></span> 应用安全全生命周期管理平台</div>
+    <h1>让安全能力<br><span class="grad-text">贯穿每一次代码提交</span></h1>
+    <p class="sub">哨兵（Sentinel）覆盖从项目接入、安全扫描、漏洞闭环、事件调查到合规报告的全流程，把 SAST / SCA / DAST / 密钥检测、AI 智能分析与 CI-CD 安全门禁整合进一套平台，让开发团队少救火、多预防。</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="#map">查看完整能力 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      <a class="btn ghost" href="#deploy">部署形态</a>
+    </div>
+
+    <div class="dash reveal">
+      <div class="dash-top">
+        <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="1.8"><use href="#i-shield"/></svg> 安全态势总览</h3>
+        <span class="live">实时数据</span>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi c"><div class="lbl">待修复 Critical</div><div class="val c" data-count="9">0</div><div class="bar"><i data-w="90%"></i></div></div>
+        <div class="kpi h"><div class="lbl">待修复 High</div><div class="val h" data-count="23">0</div><div class="bar"><i data-w="72%"></i></div></div>
+        <div class="kpi m"><div class="lbl">待修复 Medium</div><div class="val m" data-count="41">0</div><div class="bar"><i data-w="55%"></i></div></div>
+        <div class="kpi l"><div class="lbl">整体修复率</div><div class="val l" data-count="86">0</div><div class="bar"><i data-w="86%"></i></div></div>
+      </div>
+      <div class="dash-foot">
+        <div class="mini">
+          <div class="t">四类扫描覆盖率</div>
+          <div class="cov">
+            <div class="row"><span>SAST</span><div class="track"><i data-w="92%"></i></div><b>92%</b></div>
+            <div class="row"><span>SCA</span><div class="track"><i data-w="88%"></i></div><b>88%</b></div>
+            <div class="row"><span>DAST</span><div class="track"><i data-w="64%"></i></div><b>64%</b></div>
+            <div class="row"><span>SECRET</span><div class="track"><i data-w="95%"></i></div><b>95%</b></div>
+          </div>
+        </div>
+        <div class="mini">
+          <div class="t">漏洞严重度分布</div>
+          <div class="donut-wrap">
+            <svg width="92" height="92" viewBox="0 0 42 42">
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="5"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ff4d6d" stroke-width="5" stroke-dasharray="7 35.2" stroke-dashoffset="0"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ff9f43" stroke-width="5" stroke-dasharray="18 24.2" stroke-dashoffset="-7"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ffd60a" stroke-width="5" stroke-dasharray="32 10.2" stroke-dashoffset="-25"/>
+              <circle cx="21" cy="21" r="15.9" fill="none" stroke="#22c55e" stroke-width="5" stroke-dasharray="11 31.2" stroke-dashoffset="-57"/>
+            </svg>
+            <div class="leg">
+              <div><i style="background:#ff4d6d"></i> Critical · 9</div>
+              <div><i style="background:#ff9f43"></i> High · 23</div>
+              <div><i style="background:#ffd60a"></i> Medium · 41</div>
+              <div><i style="background:#22c55e"></i> Low · 14</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== stat strip ===== -->
+<section style="padding:34px 0">
+  <div class="wrap">
+    <div class="stats reveal">
+      <div class="stat"><div class="n" data-count="16">0</div><div class="c">功能模块</div></div>
+      <div class="stat"><div class="n" data-count="4">0</div><div class="c">扫描引擎</div></div>
+      <div class="stat"><div class="n" data-count="6">0</div><div class="c">预置工具</div></div>
+      <div class="stat"><div class="n" data-count="5">0</div><div class="c">报告类型</div></div>
+      <div class="stat"><div class="n" data-count="5">0</div><div class="c">报告格式</div></div>
+      <div class="stat"><div class="n" data-count="4">0</div><div class="c">角色权限</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== platform module map ===== -->
+<section id="map">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">平台全景</span>
+      <h2 class="h2">一套平台，覆盖安全的<span class="grad-text">每一个环节</span></h2>
+      <p class="lead">哨兵按真实安全工作流组织功能，从每日总览到审计追溯，16 个模块各司其职又彼此打通。下面就是平台完整的能力地图。</p>
+    </div>
+
+    <div class="groups">
+      <div class="group reveal">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-grid"/></svg> 工作台 <span class="tag">OVERVIEW</span></h4>
+        <div class="desc">每天打开哨兵的第一站，看全局与当日待办。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-clock"/></svg><div><div class="mt">Today 每日总览</div><div class="md">开放漏洞、待处理告警、SLA 超期、即将到期一览</div><div class="mp">/today</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-grid"/></svg><div><div class="mt">Dashboard 综合仪表盘</div><div class="md">KPI、漏洞趋势、扫描频率、严重度分布</div><div class="mp">/dashboard</div></div></div>
+        </div>
+      </div>
+
+      <div class="group reveal d1">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-folder"/></svg> 建设 <span class="tag">BUILD</span></h4>
+        <div class="desc">把资产、规则、AI 能力接入平台。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-folder"/></svg><div><div class="mt">项目管理</div><div class="md">登记仓库/URL/路径、语言与项目类型</div><div class="mp">/projects</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-robot"/></svg><div><div class="mt">AI 分析</div><div class="md">漏洞 AI 分析 + AI 安全顾问</div><div class="mp">/ai</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-sliders"/></svg><div><div class="mt">规则管理</div><div class="md">自定义扫描规则与忽略白名单</div><div class="mp">/rules</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-box"/></svg><div><div class="mt">资产管理</div><div class="md">应用资产与自动风险评分</div><div class="mp">/assets</div></div></div>
+        </div>
+      </div>
+
+      <div class="group reveal d2">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-scan"/></svg> 处置 <span class="tag">REMEDIATE</span></h4>
+        <div class="desc">发现、派发、跟踪每一处风险。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-radar"/></svg><div><div class="mt">扫描管理</div><div class="md">四类扫描、CI-CD 集成、定时任务</div><div class="mp">/scans</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-bug"/></svg><div><div class="mt">漏洞管理</div><div class="md">列表筛选、状态流转、指派、AI 分析</div><div class="mp">/vulnerabilities</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-ticket"/></svg><div><div class="mt">工单管理</div><div class="md">漏洞转任务、SLA 跟踪、评论协作</div><div class="mp">/tickets</div></div></div>
+        </div>
+      </div>
+
+      <div class="group reveal">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-layers"/></svg> 调查 <span class="tag">INVESTIGATE</span></h4>
+        <div class="desc">深入单点事件，做出判断与处置。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-layers"/></svg><div><div class="mt">事件调查</div><div class="md">三栏式界面：列表 / 详情 / 操作</div><div class="mp">/investigation</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-bell"/></svg><div><div class="mt">告警中心</div><div class="md">告警确认、误报标记、批量处理</div><div class="mp">/alerts</div></div></div>
+        </div>
+      </div>
+
+      <div class="group reveal d1">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-file"/></svg> 复盘 <span class="tag">REVIEW</span></h4>
+        <div class="desc">沉淀结论，对外汇报与合规留存。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-file"/></svg><div><div class="mt">报告生成</div><div class="md">5 类报告 × 5 种格式导出</div><div class="mp">/reports</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-doc"/></svg><div><div class="mt">审计日志</div><div class="md">操作留痕、统计分布、安全事件</div><div class="mp">/audit</div></div></div>
+        </div>
+      </div>
+
+      <div class="group reveal d2">
+        <h4><svg class="ico" style="width:24px;height:24px;padding:0;background:none;color:var(--cyan)"><use href="#i-gear"/></svg> 系统 <span class="tag">SYSTEM</span></h4>
+        <div class="desc">连接工具、配置策略、管理团队。</div>
+        <div class="mods">
+          <div class="mod"><svg class="ico"><use href="#i-wrench"/></svg><div><div class="mt">工具集成</div><div class="md">预置 6 款 + 自定义工具注册</div><div class="mp">/tools</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-gear"/></svg><div><div class="mt">系统设置</div><div class="md">邮件、告警规则、门禁策略</div><div class="mp">/settings</div></div></div>
+          <div class="mod"><svg class="ico"><use href="#i-users"/></svg><div><div class="mt">用户管理</div><div class="md">角色分配、启停、解锁（仅 Admin）</div><div class="mp">/users</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== core capabilities ===== -->
+<section id="cap">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">核心能力</span>
+      <h2 class="h2">九大引擎，构成安全<span class="grad-text">左移的底座</span></h2>
+      <p class="lead">从代码到运行态，从人工到智能，哨兵把主流应用安全技术统一编排到一条流水线上。</p>
+    </div>
+    <div class="grid-3">
+      <div class="card reveal"><svg class="ico"><use href="#i-code"/></svg><h3>SAST 静态扫描</h3><p>分析源代码中的安全漏洞：SQL 注入、XSS、密码硬编码、危险函数调用等。</p></div>
+      <div class="card reveal d1"><svg class="ico"><use href="#i-box"/></svg><h3>SCA 组件分析</h3><p>检测第三方依赖中的已知 CVE 漏洞与开源许可证风险。</p></div>
+      <div class="card reveal d2"><svg class="ico"><use href="#i-globe"/></svg><h3>DAST 动态扫描</h3><p>对运行中的应用进行黑盒安全测试，发现运行态暴露面。</p></div>
+      <div class="card reveal"><svg class="ico"><use href="#i-key"/></svg><h3>密钥泄露检测</h3><p>扫描代码仓库中的敏感信息：API Key、密码、令牌、私钥。</p></div>
+      <div class="card reveal d1"><svg class="ico"><use href="#i-robot"/></svg><h3>AI 智能分析</h3><p>自动分析漏洞根因、利用路径与修复方案，并能以对话方式答疑。</p></div>
+      <div class="card reveal d2"><svg class="ico"><use href="#i-ticket"/></svg><h3>工单闭环</h3><p>漏洞分配到人、SLA 跟踪、修复验证，全程可追溯。</p></div>
+      <div class="card reveal"><svg class="ico"><use href="#i-branch"/></svg><h3>CI/CD 集成</h3><p>支持 GitLab CI、GitHub Actions、Jenkins 自动触发扫描。</p></div>
+      <div class="card reveal d1"><svg class="ico"><use href="#i-lock"/></svg><h3>安全门禁</h3><p>基于漏洞严重度的构建阻断策略，问题不出流水线。</p></div>
+      <div class="card reveal d2"><svg class="ico"><use href="#i-file"/></svg><h3>报告导出</h3><p>安全摘要、SLA 报告、合规检查，支持 HTML / PDF 等 5 种格式。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== project & scan ===== -->
+<section id="manage">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">项目管理与扫描</span>
+      <h2 class="h2">从登记项目到<span class="grad-text">自动扫描</span></h2>
+      <p class="lead">一个项目可登记多类信息，平台据此选择最合适的扫描方式，并在代码提交时自动触发。</p>
+    </div>
+
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">项目管理 · 多维度登记</div>
+          <div class="list-line"><svg><use href="#i-folder"/></svg><div><b>项目类型</b>：Web 应用 / API 服务 / 移动端 / 基础设施</div></div>
+          <div class="list-line"><svg><use href="#i-code"/></svg><div><b>编程语言</b>：Python / JavaScript / Java / Go / PHP / Ruby</div></div>
+          <div class="list-line"><svg><use href="#i-globe"/></svg><div><b>目标 URL</b>：用于 DAST 动态扫描（应用需处于运行状态）</div></div>
+          <div class="list-line"><svg><use href="#i-branch"/></svg><div><b>仓库 / 本地路径</b>：用于 SAST 静态分析与 SECRET 检测</div></div>
+          <div class="list-line"><svg><use href="#i-gear"/></svg><div><b>操作</b>：编辑、删除（级联清理关联扫描与漏洞）、一键扫描</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">扫描管理 · 触发与集成</div>
+          <div class="list-line"><svg><use href="#i-radar"/></svg><div><b>新建扫描</b>：选目标项目 → 选扫描类型 → 后台执行</div></div>
+          <div class="list-line"><svg><use href="#i-branch"/></svg><div><b>CI/CD 集成</b>：复制配置到 GitLab CI / GitHub Actions / Jenkins</div></div>
+          <div class="list-line"><svg><use href="#i-clock"/></svg><div><b>定时扫描</b>：周期性自动巡检，覆盖间歇暴露面</div></div>
+          <div class="list-line"><svg><use href="#i-bell"/></svg><div><b>结果入库</b>：扫描发现的漏洞自动进入漏洞管理</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scan-grid">
+      <div class="scan reveal"><div class="badge-t">SAST</div><h4>静态应用安全测试</h4><p>分析源代码，定位注入、XSS、硬编码等代码层漏洞。</p></div>
+      <div class="scan reveal d1"><div class="badge-t">SCA</div><h4>软件成分分析</h4><p>扫描依赖树，匹配已知 CVE 与开源许可证风险。</p></div>
+      <div class="scan reveal d2"><div class="badge-t">DAST</div><h4>动态应用安全测试</h4><p>对运行中的应用黑盒测试，发现运行态暴露面。</p></div>
+      <div class="scan reveal d3"><div class="badge-t">SECRET</div><h4>密钥泄露检测</h4><p>扫描仓库中的 API Key、密码、令牌等敏感信息。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== vulnerability lifecycle ===== -->
+<section>
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">漏洞管理闭环</span>
+      <h2 class="h2">每一个漏洞，<span class="grad-text">都有去处</span></h2>
+      <p class="lead">漏洞不是被发现就结束。哨兵提供筛选、批量操作、状态流转、指派与 AI 分析，让修复过程可被跟踪、可被验收。</p>
+    </div>
+
+    <div class="pipe">
+      <div class="step reveal"><div class="num">01</div><h4>发现 Open</h4><p>扫描或导入产生漏洞，自动入库并归类严重度。</p></div>
+      <div class="step reveal d1"><div class="num">02</div><h4>处理中 In Progress</h4><p>分析师评估、指派开发人员，系统邮件通知责任人。</p></div>
+      <div class="step reveal d2"><div class="num">03</div><h4>已修复 Resolved</h4><p>开发人员提交修复，触发重新扫描验证。</p></div>
+      <div class="step reveal d3"><div class="num">04</div><h4>关闭 Closed</h4><p>验证通过自动关闭，操作留痕于审计日志。</p></div>
+    </div>
+
+    <div class="split" style="margin-top:34px">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">漏洞列表 · 高效处理</div>
+          <div class="list-line"><svg><use href="#i-search"/></svg><div><b>筛选 / 排序</b>：按严重度、状态、关键词快速定位</div></div>
+          <div class="list-line"><svg><use href="#i-list"/></svg><div><b>批量操作</b>：多选漏洞批量删除或标记已修复</div></div>
+          <div class="list-line"><svg><use href="#i-users"/></svg><div><b>指派漏洞</b>：指定处理人，自动发送邮件通知</div></div>
+          <div class="list-line"><svg><use href="#i-robot"/></svg><div><b>AI 分析</b>：一键获取根因、攻击路径、修复建议并持久保存</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">严重度与 SLA</div>
+          <table style="margin-top:4px">
+            <thead><tr><th>级别</th><th>SLA 期限</th></tr></thead>
+            <tbody>
+              <tr><td><span class="pill"><span class="sw c"></span>Critical</span></td><td class="mono">1 天</td></tr>
+              <tr><td><span class="pill"><span class="sw h"></span>High</span></td><td class="mono">7 天</td></tr>
+              <tr><td><span class="pill"><span class="sw m"></span>Medium</span></td><td class="mono">30 天</td></tr>
+              <tr><td><span class="pill"><span class="sw l"></span>Low</span></td><td class="mono">90 天</td></tr>
+              <tr><td><span class="pill"><span class="sw i"></span>Info</span></td><td class="mono">无 SLA</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== investigation & alert ===== -->
+<section id="invest">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">事件调查与告警中心</span>
+      <h2 class="h2">把<span class="grad-text">单点事件</span>看透、处置完</h2>
+      <p class="lead">当预警出现，调查界面帮你快速定位上下文、调取完整证据链，并在告警中心完成确认与清场。</p>
+    </div>
+
+    <div class="tri">
+      <div class="col reveal"><h4><svg class="ic"><use href="#i-list"/></svg> 左栏 · 事件列表</h4><div class="line">漏洞与告警合并视图</div><div class="line">支持筛选与搜索</div><div class="line">点击即切入详情</div></div>
+      <div class="col reveal d1"><h4><svg class="ic"><use href="#i-doc"/></svg> 中栏 · 事件详情</h4><div class="line">描述 / CVE / CWE</div><div class="line">CVSS 评分</div><div class="line">修复建议与上下文</div></div>
+      <div class="col reveal d2"><h4><svg class="ic"><use href="#i-gear"/></svg> 右栏 · 操作面板</h4><div class="line">一键 AI 分析</div><div class="line">创建工单转任务</div><div class="line">查看关联上下文</div></div>
+    </div>
+
+    <div class="tbl-wrap reveal" style="margin-top:26px">
+      <table>
+        <thead><tr><th>告警状态</th><th>说明</th><th>典型操作</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill"><span class="sw c"></span>new</span></td><td>新告警，未确认</td><td>标记已确认 / 查看详情</td></tr>
+          <tr><td><span class="pill"><span class="sw h"></span>acknowledged</span></td><td>已确认，正在处理</td><td>批量确认</td></tr>
+          <tr><td><span class="pill"><span class="sw l"></span>resolved</span></td><td>已解决</td><td>批量关闭</td></tr>
+          <tr><td><span class="pill"><span class="sw i"></span>false_positive</span></td><td>误报，忽略</td><td>误报标记</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ticket ===== -->
+<section>
+  <div class="wrap">
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">工单管理 · 让修复有人负责</div>
+          <div class="list-line"><svg><use href="#i-ticket"/></svg><div><b>创建工单</b>：标题、描述、优先级（紧急/高/中/低）</div></div>
+          <div class="list-line"><svg><use href="#i-users"/></svg><div><b>指派与关联</b>：指定处理人，可绑定来源漏洞或告警</div></div>
+          <div class="list-line"><svg><use href="#i-chat"/></svg><div><b>评论协作</b>：进展与处理意见写入工单历史</div></div>
+          <div class="list-line"><svg><use href="#i-branch"/></svg><div><b>状态流转</b>：open → in_progress → resolved → closed</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="pipe" style="margin-top:0">
+          <div class="step"><div class="num">01</div><h4>待处理</h4><p>工单创建并指派。</p></div>
+          <div class="step"><div class="num">02</div><h4>处理中</h4><p>责任人开始修复。</p></div>
+          <div class="step"><div class="num">03</div><h4>已解决</h4><p>修复完成待验收。</p></div>
+          <div class="step"><div class="num">04</div><h4>关闭</h4><p>验收通过归档。</p></div>
+        </div>
+        <p class="lead" style="margin-top:20px;font-size:14px">工单与漏洞、扫描、AI 分析、邮件通知深度联动——发现即派发，修复有回音。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== AI dual engine ===== -->
+<section id="ai">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">智能分析双引擎</span>
+      <h2 class="h2">AI 既是<span class="grad-text">分析师</span>，也是<span class="grad-text">顾问</span></h2>
+      <p class="lead">哨兵内置两类 AI 能力：针对单条漏洞的深度分析，以及随时答疑的安全顾问对话。</p>
+    </div>
+
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">功能一 · 漏洞 AI 分析</div>
+          <div class="list-line"><svg><use href="#i-bug"/></svg><div>漏洞类型与严重性评估</div></div>
+          <div class="list-line"><svg><use href="#i-branch"/></svg><div>攻击路径（详细步骤）</div></div>
+          <div class="list-line"><svg><use href="#i-radar"/></svg><div>利用难度评估</div></div>
+          <div class="list-line"><svg><use href="#i-box"/></svg><div>业务影响分析</div></div>
+          <div class="list-line"><svg><use href="#i-check"/></svg><div>修复优先级建议</div></div>
+          <p class="lead" style="font-size:12.5px;margin-top:14px;color:var(--faint)">结果自动入库，刷新不丢失。支持 Ollama 本地模型或 OpenAI API。</p>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">功能二 · AI 安全顾问</div>
+          <div class="chat">
+            <div class="bubble u">这个 SQL 注入在生产环境危害有多大？怎么修？</div>
+            <div class="bubble a">
+              <div class="who"><svg><use href="#i-robot"/></svg> 哨兵安全顾问</div>
+              结合当前漏洞上下文，建议如下：
+              <ul>
+                <li>危害：可越权读取用户表，CVSS 约 9.1（Critical）</li>
+                <li>修复：使用参数化查询 / ORM，禁止字符串拼接 SQL</li>
+                <li>验证：修复后触发重新扫描确认闭环</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== asset & rules ===== -->
+<section id="asset">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">资产管理与规则扩展</span>
+      <h2 class="h2">看清资产风险，<span class="grad-text">按规则定制</span></h2>
+      <p class="lead">资产风险自动评分，让安全资源投向最危险的地方；自定义规则与工具，让平台适配你的团队习惯。</p>
+    </div>
+
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">资产管理 · 自动风险评分（0–100）</div>
+          <div class="list-line"><svg><use href="#i-bug"/></svg><div><b>漏洞数量</b>：最高 40 分</div></div>
+          <div class="list-line"><svg><use href="#i-globe"/></svg><div><b>运行环境</b>：生产环境 +25 分</div></div>
+          <div class="list-line"><svg><use href="#i-code"/></svg><div><b>资产类型</b>：Web / API +15 分</div></div>
+          <div class="list-line"><svg><use href="#i-clock"/></svg><div><b>扫描时效</b>：超 90 天未扫 +20 分</div></div>
+          <div style="margin-top:14px" class="tbl-wrap">
+            <table style="margin:0">
+              <thead><tr><th>分数</th><th>等级</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">≥ 80</td><td><span class="pill"><span class="sw c"></span>严重</span></td></tr>
+                <tr><td class="mono">≥ 60</td><td><span class="pill"><span class="sw h"></span>高危</span></td></tr>
+                <tr><td class="mono">≥ 35</td><td><span class="pill"><span class="sw m"></span>中危</span></td></tr>
+                <tr><td class="mono">≥ 10</td><td><span class="pill"><span class="sw l"></span>低危</span></td></tr>
+                <tr><td class="mono">&lt; 10</td><td><span class="pill"><span class="sw i"></span>信息级</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="lead" style="font-size:12.5px;margin-top:12px;color:var(--faint)">操作：从项目同步、手动重算风险、查看关联漏洞。</p>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">规则与工具 · 平台可扩展</div>
+          <div class="list-line"><svg><use href="#i-sliders"/></svg><div><b>规则类型</b>：custom_scan（命中生成漏洞）/ ignore（白名单跳过）</div></div>
+          <div class="list-line"><svg><use href="#i-code"/></svg><div><b>匹配方式</b>：正则表达式，选择适用工具（SAST/SCA/DAST/SECRET）</div></div>
+          <div class="list-line"><svg><use href="#i-box"/></svg><div><b>作用域</b>：全局或指定项目，保存即启用</div></div>
+          <div class="list-line"><svg><use href="#i-wrench"/></svg><div><b>自定义工具</b>：注册名称 / 类型 / API 端点 / Key，支持「测试连接」</div></div>
+          <div class="list-line"><svg><use href="#i-check"/></svg><div><b>启用 / 禁用</b>：一键开关，禁用工具不参与扫描</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== report & compliance ===== -->
+<section id="report">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">报告与合规</span>
+      <h2 class="h2">把安全成果，<span class="grad-text">讲清楚、交出去</span></h2>
+      <p class="lead">5 类报告 × 5 种格式，从给开发看的技术明细，到给管理层看的合规摘要，一键生成、精美导出。</p>
+    </div>
+
+    <div class="grid-3">
+      <div class="card reveal"><svg class="ico"><use href="#i-shield"/></svg><h3>安全摘要</h3><p>整体安全态势总结，适合定期汇报。</p></div>
+      <div class="card reveal d1"><svg class="ico"><use href="#i-bug"/></svg><h3>漏洞明细</h3><p>详细漏洞列表与统计分析。</p></div>
+      <div class="card reveal d2"><svg class="ico"><use href="#i-clock"/></svg><h3>SLA 报告</h3><p>SLA 合规情况与超期分析。</p></div>
+      <div class="card reveal"><svg class="ico"><use href="#i-chart"/></svg><h3>趋势分析</h3><p>最近 12 个月安全趋势变化。</p></div>
+      <div class="card reveal d1"><svg class="ico"><use href="#i-check"/></svg><h3>合规检查</h3><p>基于 OWASP ASVS 的合规评估。</p></div>
+      <div class="card reveal d2"><svg class="ico"><use href="#i-file"/></svg><h3>5 种导出格式</h3><p>JSON · Markdown · CSV · <b style="color:var(--cyan)">PDF</b> · <b style="color:var(--cyan)">HTML</b></p></div>
+    </div>
+
+    <div class="split" style="margin-top:30px">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">两大新增导出能力</div>
+          <div class="list-line"><svg><use href="#i-file"/></svg><div><b>自包含 HTML 报告</b>：暗色主题、内联 SVG 图表，双击即开，浏览器可直接打印成 PDF。</div></div>
+          <div class="list-line"><svg><use href="#i-file"/></svg><div><b>可视化 PDF 报告</b>：封面 + KPI 卡 + 风险横幅 + 严重度配色 + TOP 漏洞 + 合规评级圆环。</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">合规框架对齐</div>
+          <div class="grid-2" style="gap:12px;margin-top:6px">
+            <div class="mod"><svg class="ico"><use href="#i-shield"/></svg><div><div class="mt">等保 2.0</div><div class="md">等级保护合规</div></div></div>
+            <div class="mod"><svg class="ico"><use href="#i-globe"/></svg><div><div class="mt">OWASP ASVS</div><div class="md">应用安全验证</div></div></div>
+            <div class="mod"><svg class="ico"><use href="#i-list"/></svg><div><div class="mt">OWASP Top 10</div><div class="md">风险覆盖对齐</div></div></div>
+            <div class="mod"><svg class="ico"><use href="#i-search"/></svg><div><div class="mt">CWE / CVE</div><div class="md">弱点与漏洞映射</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== gate policy ===== -->
+<section>
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">安全门禁策略</span>
+      <h2 class="h2">问题，<span class="grad-text">不出流水线</span></h2>
+      <p class="lead">在 CI/CD 中配置门禁，按严重度决定构建是否通过，把安全卡在交付之前。</p>
+    </div>
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">门禁模式</div>
+          <div class="list-line"><svg><use href="#i-lock"/></svg><div><b>block</b>：发现阻断级漏洞时，阻止构建通过</div></div>
+          <div class="list-line"><svg><use href="#i-bell"/></svg><div><b>warn</b>：仅告警，不阻止构建</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>严重度</th><th>默认动作</th></tr></thead>
+            <tbody>
+              <tr><td><span class="pill"><span class="sw c"></span>Critical</span></td><td><span class="pill" style="color:var(--crit)"><span class="sw c"></span>block 阻断</span></td></tr>
+              <tr><td><span class="pill"><span class="sw h"></span>High</span></td><td><span class="pill" style="color:var(--high)"><span class="sw h"></span>warn 告警</span></td></tr>
+              <tr><td><span class="pill"><span class="sw m"></span>Medium</span></td><td><span class="pill" style="color:var(--low)"><span class="sw l"></span>pass 通过</span></td></tr>
+              <tr><td><span class="pill"><span class="sw l"></span>Low</span></td><td><span class="pill" style="color:var(--low)"><span class="sw l"></span>pass 通过</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== audit governance ===== -->
+<section id="govern">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">审计日志与治理</span>
+      <h2 class="h2">每一次操作，<span class="grad-text">都可追溯</span></h2>
+      <p class="lead">审计日志记录所有用户操作，用于安全审计与问题追溯，满足合规留存要求。</p>
+    </div>
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">三个标签页</div>
+          <div class="list-line"><svg><use href="#i-list"/></svg><div><b>操作日志</b>：所有用户操作详细记录</div></div>
+          <div class="list-line"><svg><use href="#i-chart"/></svg><div><b>统计分布</b>：操作类型分布、最活跃用户 Top 5</div></div>
+          <div class="list-line"><svg><use href="#i-shield"/></svg><div><b>安全事件</b>：高风险操作专项记录</div></div>
+          <div class="list-line"><svg><use href="#i-file"/></svg><div><b>导出日志</b>：一键导出 CSV 留存</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">日志详情字段</div>
+          <div class="list-line"><svg><use href="#i-clock"/></svg><div>操作时间 / 操作者 / IP 地址</div></div>
+          <div class="list-line"><svg><use href="#i-code"/></svg><div>操作类型 / 目标资源</div></div>
+          <div class="list-line"><svg><use href="#i-check"/></svg><div>操作结果（成功 / 失败）</div></div>
+          <div class="list-line"><svg><use href="#i-shield"/></svg><div>风险等级 / 耗时</div></div>
+          <div class="list-line"><svg><use href="#i-search"/></svg><div>完整请求路径与 User-Agent</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== workflows ===== -->
+<section id="flow">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">典型工作流</span>
+      <h2 class="h2">开箱即用的<span class="grad-text">安全节奏</span></h2>
+      <p class="lead">哨兵把最佳实践固化成三条可复制的工作流，团队上手即可跑通。</p>
+    </div>
+
+    <div class="flow reveal">
+      <h4><svg class="ico"><use href="#i-bug"/></svg> 完整漏洞处理流程</h4>
+      <div class="steps">
+        <span class="s"><b>01</b> 提交代码</span><span class="arr">→</span>
+        <span class="s"><b>02</b> CI/CD 触发扫描</span><span class="arr">→</span>
+        <span class="s"><b>03</b> 漏洞自动入库</span><span class="arr">→</span>
+        <span class="s"><b>04</b> Today 查看新漏洞</span><span class="arr">→</span>
+        <span class="s"><b>05</b> AI 评估严重性</span><span class="arr">→</span>
+        <span class="s"><b>06</b> 建工单指派开发</span><span class="arr">→</span>
+        <span class="s"><b>07</b> 邮件通知</span><span class="arr">→</span>
+        <span class="s"><b>08</b> 修复 + 重扫验证</span><span class="arr">→</span>
+        <span class="s"><b>09</b> 关闭 + 审计留痕</span>
+      </div>
+    </div>
+
+    <div class="flow reveal d1">
+      <h4><svg class="ico"><use href="#i-clock"/></svg> 定期安全审查流程</h4>
+      <div class="steps">
+        <span class="s"><b>每周</b> Dashboard 看态势</span><span class="arr">→</span>
+        <span class="s"><b>每周</b> 生成周报</span><span class="arr">→</span>
+        <span class="s"><b>每周</b> 清 SLA 超期</span><span class="arr">→</span>
+        <span class="s"><b>每月</b> 安全摘要汇报</span><span class="arr">→</span>
+        <span class="s"><b>每月</b> 审计日志审查</span>
+      </div>
+    </div>
+
+    <div class="flow reveal d2">
+      <h4><svg class="ico"><use href="#i-lock"/></svg> CI/CD 安全门禁配置流程</h4>
+      <div class="steps">
+        <span class="s"><b>01</b> 复制 CI 配置代码</span><span class="arr">→</span>
+        <span class="s"><b>02</b> 写入 .gitlab-ci.yml / workflow</span><span class="arr">→</span>
+        <span class="s"><b>03</b> 配置门禁策略 block/warn</span><span class="arr">→</span>
+        <span class="s"><b>04</b> 提交触发 CI</span><span class="arr">→</span>
+        <span class="s"><b>05</b> 确认门禁生效</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== deploy & integration ===== -->
+<section id="deploy">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">部署与集成</span>
+      <h2 class="h2">私有化可控，<span class="grad-text">融入现有体系</span></h2>
+      <p class="lead">哨兵采用前后端分离架构，支持私有化部署，数据与模型都掌握在自己手里；同时通过工具与 CI/CD 无缝接入你的研发流水线。</p>
+    </div>
+    <div class="split">
+      <div class="reveal">
+        <div class="panel">
+          <div class="ph">技术架构</div>
+          <div class="list-line"><svg><use href="#i-code"/></svg><div><b>后端</b>：Flask 提供 REST API 与调度</div></div>
+          <div class="list-line"><svg><use href="#i-globe"/></svg><div><b>前端</b>：React 18 + Vite 单页应用</div></div>
+          <div class="list-line"><svg><use href="#i-box"/></svg><div><b>存储</b>：SQLite（可定期备份实例库）</div></div>
+          <div class="list-line"><svg><use href="#i-lock"/></svg><div><b>部署</b>：私有化单机 / 内网，数据不出域</div></div>
+        </div>
+      </div>
+      <div class="reveal d1">
+        <div class="panel">
+          <div class="ph">生态连接</div>
+          <div class="list-line"><svg><use href="#i-branch"/></svg><div><b>CI/CD</b>：GitLab CI / GitHub Actions / Jenkins</div></div>
+          <div class="list-line"><svg><use href="#i-wrench"/></svg><div><b>扫描工具</b>：Semgrep / Trivy / ZAP / Gitleaks / Dependency-Check / CodeQL</div></div>
+          <div class="list-line"><svg><use href="#i-robot"/></svg><div><b>AI</b>：Ollama 本地模型 / OpenAI API</div></div>
+          <div class="list-line"><svg><use href="#i-mail"/></svg><div><b>通知</b>：SMTP 邮件（漏洞 / 每日摘要 / 周报）</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <span class="chip"><svg><use href="#i-code"/></svg> Python</span>
+      <span class="chip"><svg><use href="#i-globe"/></svg> React 18</span>
+      <span class="chip"><svg><use href="#i-branch"/></svg> GitLab CI</span>
+      <span class="chip"><svg><use href="#i-branch"/></svg> GitHub Actions</span>
+      <span class="chip"><svg><use href="#i-branch"/></svg> Jenkins</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> Semgrep</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> Trivy</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> OWASP ZAP</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> Gitleaks</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> Dependency-Check</span>
+      <span class="chip"><svg><use href="#i-wrench"/></svg> CodeQL</span>
+      <span class="chip"><svg><use href="#i-robot"/></svg> Ollama</span>
+      <span class="chip"><svg><use href="#i-robot"/></svg> OpenAI</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===== role matrix ===== -->
+<section>
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">角色权限</span>
+      <h2 class="h2">该看的看，<span class="grad-text">不该看的看不到</span></h2>
+      <p class="lead">基于 RBAC 的四级角色，菜单按权限动态显示，最小权限原则落到每个操作。</p>
+    </div>
+    <div class="tbl-wrap reveal">
+      <table>
+        <thead><tr><th>角色</th><th>漏洞</th><th>扫描</th><th>规则</th><th>资产</th><th>报告</th><th>用户</th><th>设置</th></tr></thead>
+        <tbody>
+          <tr><td><b>管理员 admin</b></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg> 全权限</td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td></tr>
+          <tr><td><b>安全分析师</b></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg> 读写</td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="yk"><svg width="15" height="15" style="vertical-align:-2px"><use href="#i-check"/></svg></td><td class="nk">—</td><td class="nk">—</td></tr>
+          <tr><td><b>开发人员</b></td><td class="yk">只读+修复</td><td class="yk">只读</td><td class="nk">—</td><td class="yk">只读</td><td class="yk">只读</td><td class="nk">—</td><td class="nk">—</td></tr>
+          <tr><td><b>查看者</b></td><td class="yk">只读</td><td class="yk">只读</td><td class="yk">只读</td><td class="yk">只读</td><td class="yk">只读</td><td class="nk">—</td><td class="nk">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== principles ===== -->
+<section>
+  <div class="wrap">
+    <div class="reveal">
+      <span class="eyebrow">为什么选哨兵</span>
+      <h2 class="h2">不止是工具，<span class="grad-text">是一套安全节奏</span></h2>
+    </div>
+    <div class="prin">
+      <div class="p reveal"><svg class="ico"><use href="#i-branch"/></svg><h4>全生命周期</h4><p>接入→扫描→漏洞→修复→报告，闭环不脱节</p></div>
+      <div class="p reveal d1"><svg class="ico"><use href="#i-lock"/></svg><h4>安全左移</h4><p>问题在交付前发现，而非线上救火</p></div>
+      <div class="p reveal d2"><svg class="ico"><use href="#i-robot"/></svg><h4>AI 赋能</h4><p>分析根因、对话答疑，降低门槛</p></div>
+      <div class="p reveal d3"><svg class="ico"><use href="#i-box"/></svg><h4>私有可控</h4><p>数据自持，适配内网与合规要求</p></div>
+      <div class="p reveal d4"><svg class="ico"><use href="#i-check"/></svg><h4>合规就绪</h4><p>对齐等保/OWASP，报告可交付</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CTA ===== -->
+<section id="cta" class="cta">
+  <div class="wrap">
+    <div class="cta-box reveal">
+      <h2>把安全，<span class="grad-text">建在流水线里</span></h2>
+      <p>无论是想看清当下风险，还是建立长期的研发安全节奏，哨兵都能在你的团队里跑起来。</p>
+      <div class="hero-actions" style="margin-bottom:0;justify-content:center">
+        <a class="btn primary" href="#top">预约产品演示 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="btn ghost" href="#deploy">查看部署形态</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-in">
+    <div class="col" style="max-width:280px">
+      <a class="brand" href="#top" style="margin-bottom:12px">
+        <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>哨兵<small>SENTINEL SECURITY</small></span>
+      </a>
+      <p style="color:var(--faint);font-size:12.5px">应用安全全生命周期管理平台，让安全能力贯穿每一次代码提交。</p>
+    </div>
+    <div class="col"><h5>能力</h5><a href="#cap">核心能力</a><a href="#manage">项目管理与扫描</a><a href="#ai">智能分析</a><a href="#report">报告与合规</a></div>
+    <div class="col"><h5>运营</h5><a href="#map">平台全景</a><a href="#invest">调查与告警</a><a href="#govern">审计治理</a><a href="#flow">工作流</a></div>
+    <div class="col"><h5>接入</h5><a href="#deploy">部署集成</a><a href="#manage">CI/CD 门禁</a><a href="#asset">资产与规则</a><a href="#cta">预约演示</a></div>
+  </div>
+  <div class="foot-bot">
+    <span>© 2026 哨兵安全管理平台 Sentinel Security</span>
+    <span>私有化部署 · 数据自持 · 合规就绪</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // reveal on scroll
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, {threshold:0.12});
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+
+  // count-up
+  function animateCount(el){
+    var target = parseFloat(el.getAttribute('data-count')) || 0;
+    var dur = 1100, start = null;
+    function step(ts){
+      if(!start) start = ts;
+      var p = Math.min((ts - start)/dur, 1);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * eased).toString();
+      if(p < 1) requestAnimationFrame(step);
+      else el.textContent = target.toString();
+    }
+    requestAnimationFrame(step);
+  }
+  var co = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ animateCount(e.target); co.unobserve(e.target); }
+    });
+  }, {threshold:0.5});
+  document.querySelectorAll('[data-count]').forEach(function(el){ co.observe(el); });
+
+  // bar fill on reveal
+  var bo = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){
+        e.target.querySelectorAll('[data-w]').forEach(function(b){
+          b.style.width = b.getAttribute('data-w');
+        });
+        bo.unobserve(e.target);
+      }
+    });
+  }, {threshold:0.2});
+  document.querySelectorAll('.dash, .mini, .kpi').forEach(function(el){ bo.observe(el); });
+})();
+</script>
+</body>
+</html>
