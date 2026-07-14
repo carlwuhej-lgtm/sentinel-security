@@ -246,7 +246,7 @@ def download_report(rid):
 @reports_bp.route("/<int:rid>/pdf", methods=["GET"])
 @login_required
 def pdf_report(rid):
-    """导出报告为 PDF 文件（完整支持中文，使用 fpdf2 现代 API）。"""
+    """导出报告为 PDF 文件（可视化版，委托 render_pdf_report）。"""
     db = get_db()
     try:
         row = db.execute("SELECT * FROM reports WHERE id=?", (rid,)).fetchone()
@@ -255,305 +255,53 @@ def pdf_report(rid):
 
         content = row["content_json"]
         parsed = json.loads(content) if isinstance(content, str) else content
-
-        from fpdf import FPDF, XPos, YPos
-
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-
-        # ── 加载中文字体 ──
-        font_name = "Helvetica"
-        has_cjk = False
-        font_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts")
-
-        for font_file, font_label in [
-            ("SimHei.ttf", "SimHei"),
-            ("NotoSansSC-Regular.ttf", "NotoSansSC"),
-            ("msyh.ttf", "MicrosoftYaHei"),
-        ]:
-            font_path = os.path.join(font_dir, font_file)
-            if os.path.isfile(font_path):
-                try:
-                    pdf.add_font(font_label, "", font_path)
-                    pdf.add_font(font_label, "B", font_path)
-                    font_name = font_label
-                    has_cjk = True
-                    break
-                except Exception:
-                    continue
-
-        # ── 标签映射 ──
-        if has_cjk:
-            rtype_labels = {
-                "security_summary": "安全总览报告",
-                "vuln_detail": "漏洞明细报告",
-                "sla_report": "SLA 合规报告",
-                "trend": "趋势分析报告",
-                "compliance": "合规检查清单",
-            }
-            label_map = {
-                "summary": "总览",
-                "severity_distribution": "严重度分布",
-                "status_distribution": "漏洞状态分布",
-                "top_vulnerabilities": "TOP 高危漏洞",
-                "items": "漏洞明细",
-                "breached": "已超时 SLA",
-                "urgent": "即将到期（<24h）",
-                "on_track": "正常跟踪",
-                "monthly_scans": "月度扫描趋势",
-                "checks": "合规检查项",
-                "projects": "项目列表",
-                "tool_coverage": "工具覆盖情况",
-                "knowledge_base_stats": "知识库统计",
-                "fix_rate": "修复率分析",
-                "totals": "分类统计",
-                "closed_or_fixed": "已关闭/已修复",
-                "cwe_distribution": "CWE 类型分布",
-                "tool_source": "扫描工具来源",
-                "assignee_performance": "处理人 SLA 表现",
-                "avg_time_to_fix": "平均修复时间",
-                "fix_rate_trend": "修复率趋势",
-                "tool_usage": "工具使用趋势",
-                "categories": "分类汇总",
-                "compliance_details": "合规详情",
-                "risk_assessment": "风险评估",
-                "affected_assets": "受影响资产",
-            }
-        else:
-            rtype_labels = {
-                "security_summary": "Security Summary",
-                "vuln_detail": "Vulnerability Detail",
-                "sla_report": "SLA Compliance",
-                "trend": "Trend Analysis",
-                "compliance": "Compliance Checklist",
-            }
-            label_map = {
-                "summary": "Summary",
-                "severity_distribution": "Severity Distribution",
-                "status_distribution": "Status Distribution",
-                "top_vulnerabilities": "Top Vulnerabilities",
-                "items": "Vulnerability Details",
-                "breached": "SLA Breached",
-                "urgent": "Urgent (<24h)",
-                "on_track": "On Track",
-                "monthly_scans": "Monthly Scans",
-                "checks": "Compliance Checks",
-                "projects": "Projects",
-                "tool_coverage": "Tool Coverage",
-                "knowledge_base_stats": "Knowledge Base",
-                "fix_rate": "Fix Rate",
-                "totals": "Totals",
-                "closed_or_fixed": "Closed / Fixed",
-                "cwe_distribution": "CWE Distribution",
-                "tool_source": "Tool Sources",
-                "assignee_performance": "Assignee SLA",
-                "avg_time_to_fix": "Average Time to Fix",
-                "fix_rate_trend": "Fix Rate Trend",
-                "tool_usage": "Tool Usage",
-                "categories": "Categories",
-                "compliance_details": "Compliance Details",
-                "risk_assessment": "Risk Assessment",
-                "affected_assets": "Affected Assets",
-            }
-
-        def safe(text):
-            if not text:
-                return ""
-            if isinstance(text, (int, float)):
-                return str(text)
-            if has_cjk:
-                return str(text)
-            try:
-                return str(text).encode("latin-1", errors="replace").decode("latin-1")
-            except Exception:
-                return str(text)[:50]
-
-        def write_kv_table(pdf, data, col1_w=70, col2_w=90):
-            """写入键值对表格。"""
-            for key, val in data.items():
-                display_key = label_map.get(key, key)
-                val_str = str(val) if not isinstance(val, (dict, list)) else json.dumps(val, ensure_ascii=False)
-                pdf.set_font(font_name, "B", 9)
-                pdf.set_fill_color(241, 245, 249)
-                pdf.cell(col1_w, 7, safe(f" {display_key}"), border=1, fill=True)
-                pdf.set_font(font_name, "", 9)
-                pdf.set_fill_color(255, 255, 255)
-                pdf.cell(col2_w, 7, safe(val_str), border=1, fill=True,
-                         new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-        def write_data_table(pdf, items, columns, col_widths=None, max_rows=30):
-            """写入数据表格。columns: [(key, header, width_ratio), ...]"""
-            if not items:
-                return
-            # 计算列宽
-            available = 160
-            if col_widths:
-                widths = [available * r for r in col_widths]
-            else:
-                widths = [available / len(columns)] * len(columns)
-
-            # 表头
-            pdf.set_fill_color(30, 64, 175)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_font(font_name, "B", 7)
-            for (key, header, _), w in zip(columns, widths):
-                pdf.cell(w, 7, safe(str(header)[:14]), border=1, fill=True)
-            pdf.ln()
-
-            # 数据行
-            pdf.set_text_color(30, 41, 59)
-            for idx, item in enumerate(items[:max_rows]):
-                if idx % 2 == 0:
-                    pdf.set_fill_color(248, 250, 252)
-                else:
-                    pdf.set_fill_color(255, 255, 255)
-                pdf.set_font(font_name, "", 7)
-                for (key, _, _), w in zip(columns, widths):
-                    val = str(item.get(key, ""))[:20]
-                    pdf.cell(w, 6, safe(val), border=1, fill=True)
-                pdf.ln()
-
-        def write_section_heading(pdf, label):
-            """写入章节标题（带背景色）。"""
-            if pdf.get_y() > 240:
-                pdf.add_page()
-            pdf.set_fill_color(241, 245, 249)
-            pdf.set_font(font_name, "B", 12)
-            pdf.set_text_color(30, 64, 175)
-            pdf.cell(0, 9, safe(f"  {label}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True)
-            pdf.ln(3)
-
-        meta = parsed.pop("_meta", {})
-        rtype = meta.get("report_type", row["report_type"])
-
-        # ═══════════ 封面页 ═══════════
-        pdf.add_page()
-
-        # Logo
-        pdf.set_font(font_name, "B", 22)
-        pdf.set_text_color(30, 64, 175)
-        pdf.cell(0, 14, safe("SENTINEL"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        pdf.set_text_color(100, 116, 139)
-        pdf.set_font(font_name, "", 10)
-        pdf.cell(0, 8, safe("Application Security Platform"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        pdf.ln(8)
-
-        # 分隔线
-        pdf.set_draw_color(30, 64, 175)
-        pdf.set_line_width(0.5)
-        y = pdf.get_y()
-        pdf.line(30, y, 180, y)
-        pdf.ln(8)
-
-        # 标题
-        pdf.set_text_color(30, 41, 59)
-        pdf.set_font(font_name, "B", 18)
-        report_title = safe(row["title"] or rtype_labels.get(rtype, str(rtype)))
-        pdf.multi_cell(0, 10, report_title, align="C")
-        pdf.ln(3)
-
-        # 元信息
-        pdf.set_font(font_name, "", 9)
-        pdf.set_text_color(100, 116, 139)
-        gen_time = str(meta.get("generated_at", str(row["created_at"])))
-        pdf.cell(0, 5, safe(f"Sentinel AppSec Platform  |  {gen_time}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        if meta.get("filters") and meta["filters"]:
-            filter_str = ", ".join(f"{k}={v}" for k, v in meta["filters"].items())
-            pdf.cell(0, 5, safe(f"筛选条件: {filter_str}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        pdf.ln(8)
-
-        # ═══════════ 内容章节 ═══════════
-        pdf.set_text_color(30, 41, 59)
-
-        for section_key, section_val in parsed.items():
-            label = label_map.get(section_key, section_key)
-
-            # 跳过内部统计字段（已在其他 section 展示）
-            if section_key in ("period", "framework", "generated_at", "compliance_rate",
-                               "total", "totals", "total_tracked", "total_scans_in_period",
-                               "total_vulns_in_period", "estimated_score"):
-                continue
-
-            write_section_heading(pdf, label)
-
-            if isinstance(section_val, dict):
-                # 字典：用键值表格展示
-                flat_data = {}
-                nested_lists = {}
-                for sk, sv in section_val.items():
-                    if isinstance(sv, (dict, list)):
-                        nested_lists[sk] = sv
-                    else:
-                        flat_data[sk] = sv
-                if flat_data:
-                    write_kv_table(pdf, flat_data)
-                # 处理嵌套列表
-                for nk, nv in nested_lists.items():
-                    if isinstance(nv, list) and nv:
-                        sub_label = label_map.get(nk, nk)
-                        pdf.set_font(font_name, "B", 9)
-                        pdf.set_text_color(71, 85, 105)
-                        pdf.cell(0, 7, safe(f"  ▸ {sub_label} ({len(nv)} 条)"),
-                                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                        pdf.set_text_color(30, 41, 59)
-                        if isinstance(nv[0], dict):
-                            keys = list(nv[0].keys())[:5]
-                            write_data_table(pdf, nv,
-                                [(k, label_map.get(k, k), 1.0/len(keys)) for k in keys],
-                                None, 15)
-                        else:
-                            pdf.set_font(font_name, "", 9)
-                            for item in nv[:15]:
-                                pdf.cell(8, 6, safe("•"))
-                                pdf.cell(0, 6, safe(f" {item}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-            elif isinstance(section_val, list) and section_val:
-                if isinstance(section_val[0], dict):
-                    # 表格：动态选择有意义的前 5 列
-                    keys = list(section_val[0].keys())[:5]
-                    write_data_table(pdf, section_val,
-                        [(k, label_map.get(k, k), 1.0/len(keys)) for k in keys])
-                else:
-                    pdf.set_font(font_name, "", 9)
-                    for item in section_val[:30]:
-                        pdf.cell(8, 6, safe("•"))
-                        pdf.cell(0, 6, safe(f" {item}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-            elif isinstance(section_val, (int, float)):
-                pdf.set_font(font_name, "B", 16)
-                pdf.set_text_color(30, 64, 175)
-                pdf.cell(0, 10, str(section_val), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-                pdf.set_text_color(30, 41, 59)
-
-            pdf.ln(4)
-
-        # ═══════════ 页脚 ═══════════
-        pdf.ln(4)
-        pdf.set_draw_color(203, 213, 225)
-        pdf.set_line_width(0.3)
-        y = pdf.get_y()
-        pdf.line(30, y, 180, y)
-        pdf.ln(3)
-        pdf.set_font(font_name, "", 7)
-        pdf.set_text_color(148, 163, 184)
-        pdf.cell(0, 4, safe(f"Report ID: {rid}  |  Sentinel AppSec Platform  |  Page {{nb}}"),
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-        pdf.alias_nb_pages()
-
-        output = io.BytesIO()
-        pdf.output(output)
-        output.seek(0)
-
-        filename = f"sentinel-{rtype}-{str(row['created_at'])[:10]}.pdf"
-        return send_file(
-            output, mimetype="application/pdf",
-            as_attachment=True, download_name=filename,
-        )
-
+        meta = parsed.pop("_meta", {}) if isinstance(parsed, dict) else {}
+        from routes.report_pdf import render_pdf_report
+        try:
+            output = render_pdf_report(parsed, meta, dict(row))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"PDF 生成失败: {str(e)}"}), 500
+        filename = f"sentinel-{meta.get('report_type', row['report_type'])}-{str(row['created_at'])[:10]}.pdf"
+        return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=filename)
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"PDF 生成失败: {str(e)}"}), 500
+    finally:
+        db.close()
+
+
+@reports_bp.route("/<int:rid>/html", methods=["GET"])
+@login_required
+def html_report(rid):
+    """导出报告为自包含 HTML 文件（可视化版，委托 render_html_report）。"""
+    db = get_db()
+    try:
+        row = db.execute("SELECT * FROM reports WHERE id=?", (rid,)).fetchone()
+        if not row:
+            return jsonify({"error": "报告不存在"}), 404
+
+        content = row["content_json"]
+        parsed = json.loads(content) if isinstance(content, str) else content
+        meta = parsed.pop("_meta", {}) if isinstance(parsed, dict) else {}
+        title = row.get("title") or ""
+        from routes.report_html import render_html_report
+        try:
+            html = render_html_report(parsed, meta, title)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"HTML 生成失败: {str(e)}"}), 500
+        output = io.BytesIO(html.encode("utf-8"))
+        output.seek(0)
+        filename = f"sentinel-{meta.get('report_type', row['report_type'])}-{str(row['created_at'])[:10]}.html"
+        return send_file(output, mimetype="text/html; charset=utf-8", as_attachment=True, download_name=filename)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"HTML 生成失败: {str(e)}"}), 500
     finally:
         db.close()
 

@@ -132,18 +132,21 @@ export default function Reports() {
     setDetailLoading(false)
   }
 
-  const downloadFile = async (r: Report, fmt: string, isPdf: boolean = false) => {
+  const downloadFile = async (r: Report, fmt: string, isPdf: boolean = false, isHtml: boolean = false) => {
     try {
       const url = isPdf
         ? `/reports/${r.id}/pdf`
-        : `/reports/${r.id}/download?format=${fmt}`
+        : isHtml
+          ? `/reports/${r.id}/html`
+          : `/reports/${r.id}/download?format=${fmt}`
       const resp = await api.get(url, { responseType: 'blob' })
       const blob = resp.data
       const objUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = objUrl
-      const extMap: Record<string, string> = { json: '.json', csv: '.csv', markdown: '.md', pdf: '.pdf' }
-      a.download = `sentinel-report-${r.report_type}-${(r.created_at || '').slice(0, 10)}${extMap[isPdf ? 'pdf' : (fmt || 'json')] || '.json'}`
+      const extMap: Record<string, string> = { json: '.json', csv: '.csv', markdown: '.md', pdf: '.pdf', html: '.html' }
+      const ext = isPdf ? 'pdf' : isHtml ? 'html' : (fmt || 'json')
+      a.download = `sentinel-report-${r.report_type}-${(r.created_at || '').slice(0, 10)}${extMap[ext] || '.json'}`
       a.click()
       URL.revokeObjectURL(objUrl)
     } catch (err: any) {
@@ -296,12 +299,13 @@ export default function Reports() {
                  <td className="px-4 py-3 text-slate-500 text-xs">{rep.created_at || '-'}</td>
                  <td className="px-4 py-3">
                    <div className="flex items-center gap-1.5 flex-wrap">
-                     <button onClick={() => openDetail(rep)} className="px-2 py-1 text-xs rounded bg-surface-800 text-slate-300 hover:text-white hover:bg-surface-700 transition-colors">查看</button>
-                     <button onClick={() => downloadFile(rep, rep.format_type === 'json' ? 'json' : rep.format_type)} className="px-2 py-1 text-xs rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors">JSON</button>
-                     <button onClick={() => downloadFile(rep, 'markdown')} className="px-2 py-1 text-xs rounded bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 transition-colors">MD</button>
-                     <button onClick={() => downloadFile(rep, 'csv')} className="px-2 py-1 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors">CSV</button>
-                     <button onClick={() => downloadFile(rep, '', true)} className="px-2 py-1 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors">PDF</button>
-                     <button onClick={() => deleteReport(rep.id)} className="px-2 py-1 text-xs rounded bg-slate-600/20 text-slate-400 hover:text-red-400 transition-colors">删除</button>
+                    <button onClick={() => openDetail(rep)} className="px-2 py-1 text-xs rounded bg-surface-800 text-slate-300 hover:text-white hover:bg-surface-700 transition-colors">查看</button>
+                    <button onClick={() => downloadFile(rep, '', false, true)} className="px-2 py-1 text-xs rounded bg-cyan-600/25 text-cyan-300 font-semibold hover:bg-cyan-600/40 transition-colors ring-1 ring-cyan-500/40">HTML</button>
+                    <button onClick={() => downloadFile(rep, rep.format_type === 'json' ? 'json' : rep.format_type)} className="px-2 py-1 text-xs rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors">JSON</button>
+                    <button onClick={() => downloadFile(rep, 'markdown')} className="px-2 py-1 text-xs rounded bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 transition-colors">MD</button>
+                    <button onClick={() => downloadFile(rep, 'csv')} className="px-2 py-1 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors">CSV</button>
+                    <button onClick={() => downloadFile(rep, '', true)} className="px-2 py-1 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors">PDF</button>
+                    <button onClick={() => deleteReport(rep.id)} className="px-2 py-1 text-xs rounded bg-slate-600/20 text-slate-400 hover:text-red-400 transition-colors">删除</button>
                    </div>
                  </td>
                </tr>
@@ -746,6 +750,7 @@ export default function Reports() {
             })()}
 
             <div className="flex justify-end mt-4 pt-4 border-t border-slate-700/50 gap-2">
+              <button onClick={() => downloadFile(selectedReport!, '', false, true)} className="px-3 py-1.5 text-xs bg-cyan-600/25 text-cyan-300 font-semibold hover:bg-cyan-600/40 rounded-lg transition-colors ring-1 ring-cyan-500/40">HTML</button>
               <button onClick={() => downloadFile(selectedReport!, 'json')} className="px-3 py-1.5 text-xs bg-surface-800 text-slate-300 hover:text-white rounded-lg transition-colors">JSON</button>
               <button onClick={() => downloadFile(selectedReport!, 'markdown')} className="px-3 py-1.5 text-xs bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 rounded-lg transition-colors">Markdown</button>
               <button onClick={() => downloadFile(selectedReport!, 'csv')} className="px-3 py-1.5 text-xs bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded-lg transition-colors">CSV</button>
