@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, type ChangeEvent } from 'react'
 import api from '../api/client'
 
 interface Asset {
@@ -41,6 +41,7 @@ export default function Assets() {
     name: '', asset_type: 'web_api', tech_stack: [] as string[],
     environment: 'unknown', owner: '', owner_email: '', description: '',
   })
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadAssets(); loadStats() }, [])
 
@@ -107,6 +108,36 @@ export default function Assets() {
     try { await api.delete(`/assets/${id}`); loadAssets(); loadStats() } catch {}
   }
 
+  // ─── CSV 导出 ───
+  const exportCsv = async () => {
+    try {
+      const res = await api.get('/assets/export', { responseType: 'blob' })
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `assets_export_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch {}
+  }
+
+  // ─── CSV 导入（需管理员） ───
+  const importCsv = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res = await api.post('/assets/import', fd)
+      alert(`导入完成：新建 ${res.data.created} 条，跳过 ${res.data.skipped} 条空行`)
+      loadAssets(); loadStats()
+    } catch (err: any) {
+      alert('导入失败：' + (err?.response?.data?.error || err?.message || '未知错误'))
+    } finally {
+      e.target.value = ''
+    }
+  }
+
   // Stats display
   const statCards = stats ? [
     { label: '总资产数', value: stats.total_assets, color: 'text-white' },
@@ -134,6 +165,15 @@ export default function Assets() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 4v16m8-8H4"/></svg>
             新增资产
           </button>
+          <button onClick={exportCsv} className="btn-secondary text-xs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            导出 CSV
+          </button>
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary text-xs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 8l5-5 5 5M12 3v12"/></svg>
+            导入 CSV
+          </button>
+          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={importCsv} />
         </div>
       </div>
 

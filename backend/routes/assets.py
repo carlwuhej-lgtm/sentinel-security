@@ -4,8 +4,8 @@
 /api/assets/*
 """
 
-from flask import Blueprint, request, jsonify
-import json, datetime, re
+from flask import Blueprint, request, jsonify, Response
+import json, datetime, re, csv, io
 
 assets_bp = Blueprint("assets", __name__)
 
@@ -396,3 +396,126 @@ def sync_from_projects():
         })
     finally:
         db.close()
+
+
+# ─── CSV 导出 ───
+EXPORT_COLUMNS = [
+    "id", "name", "asset_type", "project_id", "tech_stack", "environment",
+    "owner", "owner_email", "risk_score", "risk_level", "status",
+    "last_vuln_count", "last_scan_date", "description", "created_at", "updated_at",
+]
+
+
+@assets_bp.route("/export", methods=["GET"])
+@login_required
+def export_assets_csv():
+    """导出全部资产为 CSV（UTF-8-SIG，Excel 直接打开中文不乱码）。"""
+    db = get_db()
+    try:
+        rows = db.execute("SELECT * FROM assets ORDER BY id").fetchall()
+    finally:
+        db.close()
+
+    buf = io.StringIO()
+    buf.write("\ufeff")  # BOM，保证 Excel 正确识别 UTF-8 中文
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        d = dict(r)
+        ts = d.get("tech_stack")
+        if isinstance(ts, str) and ts:
+            try:
+                d["tech_stack"] = "、".join(json.loads(ts))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        writer.writerow(d)
+
+    return Response(
+        buf.getvalue().encode("utf-8-sig"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=assets_export.csv"},
+    )
+
+
+# ─── CSV 导入（仅管理员） ───
+@assets_bp.route("/import", methods=["POST"])
+@admin_required
+def import_assets_csv():
+    """从 CSV 批量导入资产。要求 multipart/form-data，字段名 file。
+
+    列名兼容 /export 输出：name(必填), asset_type, project_id, tech_stack,
+    environment, owner, owner_email, risk_score, risk_level, status, description。
+    """
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "缺少上传文件（字段名应为 file）"}), 400
+
+    try:
+        raw = f.read().decode("utf-8-sig")
+    except Exception:
+        try:
+            raw = f.read().decode("utf-8")
+        except Exception:
+            return jsonify({"error": "文件编码无法识别，请使用 UTF-8 编码的 CSV"}), 400
+
+    reader = csv.DictReader(io.StringIO(raw))
+    db = get_db()
+    created = 0
+    skipped = 0
+    try:
+        for lineno, row in enumerate(reader, start=2):  # 表头为第 1 行
+            name = (row.get("name") or "").strip()
+            if not name:
+                skipped += 1
+                continue
+
+            asset_type = (row.get("asset_type") or "web_api").strip() or "web_api"
+            environment = (row.get("environment") or "unknown").strip() or "unknown"
+            status = (row.get("status") or "active").strip() or "active"
+
+            ts_raw = (row.get("tech_stack") or "").strip()
+            if ts_raw.startswith("["):
+                try:
+                    tech_stack = json.loads(ts_raw)
+                except json.JSONDecodeError:
+                    tech_stack = []
+            else:
+                tech_stack = [x.strip() for x in ts_raw.split("、") if x.strip()]
+
+            pid_raw = (row.get("project_id") or "").strip()
+            project_id = int(pid_raw) if pid_raw.isdigit() else None
+
+            # 风险分：优先用 CSV 提供值，否则按规则计算
+            score, level = _calc_risk_score({
+                "last_vuln_count": 0, "environment": environment,
+                "asset_type": asset_type, "last_scan_date": "",
+            })
+            rs = (row.get("risk_score") or "").strip()
+            rl = (row.get("risk_level") or "").strip()
+            try:
+                risk_score = float(rs) if rs else score
+                risk_level = rl or level
+            except (ValueError, TypeError):
+                risk_score, risk_level = score, level
+
+            db.execute(
+                """INSERT INTO assets
+                   (name, asset_type, project_id, tech_stack, environment,
+                    owner, owner_email, risk_score, risk_level, status, description)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (name, asset_type, project_id, json.dumps(tech_stack, ensure_ascii=False),
+                 environment, (row.get("owner") or "").strip(),
+                 (row.get("owner_email") or "").strip(), risk_score, risk_level,
+                 status, (row.get("description") or "").strip()),
+            )
+            created += 1
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": f"导入失败：{e}"}), 500
+    finally:
+        db.close()
+
+    audit_asset_op(request.current_user_id, "import_csv", 0, f"批量导入 {created} 条（跳过 {skipped} 条空行）")
+    return jsonify({"message": "导入完成", "created": created, "skipped": skipped})
