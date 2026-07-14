@@ -7,6 +7,15 @@ interface Skill {
   description: string
   risk: string
   module: string
+  source?: string
+  approval?: string
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  builtin: '内置',
+  user: '自定义',
+  marketplace: '市场',
+  repo: '仓库',
 }
 
 const RISK_STYLE: Record<string, string> = {
@@ -93,6 +102,10 @@ export default function Skills() {
                 </span>
               </div>
               <p className="text-sm text-slate-400 mt-2 flex-1">{s.description}</p>
+              <p className="text-xs text-slate-500 mt-2">
+                来源：{SOURCE_LABEL[s.source || ''] || s.source || '内置'}
+                {s.approval === 'pending' ? ' · 待审批' : ''}
+              </p>
               <div className="mt-4 flex items-center gap-3">
                 {s.id === 'code-audit' && (
                   <select

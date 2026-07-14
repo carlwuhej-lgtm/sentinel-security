@@ -1,0 +1,14 @@
+{
+  "id": "demo-sec-tips",
+  "name": "示例·安全速记（自定义 skill 模板）",
+  "description": "演示如何在 Sentinel 中加入你自己或第三方的 skill：本例由本地脚本返回 OWASP Top 10 速记。复制本清单 + 改 demo_sec_tips.py 即可接入你自己的逻辑，无需改后端代码。",
+  "risk": "low",
+  "module": "custom",
+  "source": "user",
+  "approval": "approved",
+  "runner": {
+    "type": "script",
+    "file": "demo_sec_tips.py",
+    "timeout": 15
+  }
+}
