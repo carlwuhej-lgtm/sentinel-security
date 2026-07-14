@@ -376,17 +376,22 @@ def _run_script_runner(skill: dict) -> dict:
         raise FileNotFoundError(f"skill 脚本不存在: {fname}")
     timeout = int(runner.get("timeout", 15))
     safe_env = {k: os.environ[k] for k in _SAFE_ENV_KEYS if k in os.environ}
+    # 强制子进程 UTF-8 输出（Windows 默认 GBK 会导致中文解码失败/卡死）
+    safe_env.setdefault("PYTHONUTF8", "1")
+    safe_env.setdefault("PYTHONIOENCODING", "utf-8")
     proc = subprocess.run(
         [sys.executable, path],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, stdin=subprocess.DEVNULL, timeout=timeout,
         env=safe_env,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"脚本执行失败: {proc.stderr[:2000]}")
+        err = (proc.stderr or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(f"脚本执行失败: {err[:2000]}")
+    raw = proc.stdout or b""
     try:
-        out = json.loads(proc.stdout)
+        out = json.loads(raw.decode("utf-8", errors="replace"))
     except json.JSONDecodeError:
-        out = {"raw": proc.stdout[:4000]}
+        out = {"raw": raw.decode("utf-8", errors="replace")[:4000]}
     return {"skill": skill["id"], "result": out}
 
 
