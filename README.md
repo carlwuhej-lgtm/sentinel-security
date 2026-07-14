@@ -87,36 +87,45 @@
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph Frontend["前端 (React + TypeScript + Vite)"]
+flowchart TB
+    subgraph Frontend [前端 React+TS+Vite]
         UI[SPA 单页应用]
-        API[API Client (Axios)]
+        AX[API Client Axios]
     end
 
-    subgraph Backend["后端 (Flask + SQLite)"]
-        Auth[认证鉴权<br/>PBKDF2 + JWT]
-        Assets[资产管理]
-        Vuln[漏洞管理]
-        Scan[扫描引擎]
-        Ticket[工单系统]
+    subgraph Backend [后端 Flask+SQLite]
+        AUTH[认证鉴权 PBKDF2+JWT]
+        ASSETS[资产管理]
+        VULN[漏洞管理]
+        SCAN[扫描引擎]
+        TICKET[工单系统]
         KB[知识库]
         AI[AI 分析路由]
-        Audit[审计日志]
+        AUDIT[审计日志]
     end
 
-    subgraph Integrations["集成引擎"]
-        Semgrep[SAST: Semgrep]
-        ZAP[DAST: OWASP ZAP]
-        Trivy[SCA: Trivy]
-        Gitleaks[密钥: Gitleaks]
-        Ollama[LLM: 多供应商]
+    subgraph ENGINES [集成引擎]
+        SG[SAST Semgrep]
+        ZAP_[DAST OWASP ZAP]
+        TV[SCA Trivy]
+        GL[密钥 Gitleaks]
+        LLM[LLM 多供应商]
     end
 
-    UI --> API
-    API -->|HTTP/JSON| Auth
-    API --> Assets & Vuln & Scan & Ticket & KB & AI & Audit
-    Scan --> Semgrep & ZAP & Trivy & Gitleaks
-    AI --> Ollama
+    UI --> AX
+    AX -->|HTTP JSON| AUTH
+    AX --> ASSETS
+    AX --> VULN
+    AX --> SCAN
+    AX --> TICKET
+    AX --> KB
+    AX --> AI
+    AX --> AUDIT
+    SCAN --> SG
+    SCAN --> ZAP_
+    SCAN --> TV
+    SCAN --> GL
+    AI --> LLM
 ```
 
 **数据流**: 前端 SPA 通过 Axios 与 Flask RESTful API 通信，所有接口受 JWT 保护。后端通过蓝图(Blueprint)组织 19 个模块，扫描引擎以子进程方式调用外部工具(Semgrep/ZAP/Trivy/Gitleaks)，结果回写数据库。AI 模块动态读取供应商配置，支持热切换 LLM 后端。
