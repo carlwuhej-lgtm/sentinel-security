@@ -252,6 +252,7 @@ def pdf_report(rid):
         row = db.execute("SELECT * FROM reports WHERE id=?", (rid,)).fetchone()
         if not row:
             return jsonify({"error": "报告不存在"}), 404
+        row = dict(row)
 
         content = row["content_json"]
         parsed = json.loads(content) if isinstance(content, str) else content
@@ -282,6 +283,7 @@ def html_report(rid):
         row = db.execute("SELECT * FROM reports WHERE id=?", (rid,)).fetchone()
         if not row:
             return jsonify({"error": "报告不存在"}), 404
+        row = dict(row)
 
         content = row["content_json"]
         parsed = json.loads(content) if isinstance(content, str) else content
@@ -297,7 +299,7 @@ def html_report(rid):
         output = io.BytesIO(html.encode("utf-8"))
         output.seek(0)
         filename = f"sentinel-{meta.get('report_type', row['report_type'])}-{str(row['created_at'])[:10]}.html"
-        return send_file(output, mimetype="text/html; charset=utf-8", as_attachment=True, download_name=filename)
+        return send_file(output, mimetype="text/html", as_attachment=True, download_name=filename)
     except Exception as e:
         import traceback
         traceback.print_exc()
