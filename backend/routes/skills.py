@@ -36,6 +36,9 @@ import asyncio
 import logging
 import subprocess
 import urllib.request
+import socket
+import ipaddress
+from urllib.parse import urlparse
 from contextlib import AsyncExitStack
 
 from flask import Blueprint, request, jsonify
@@ -57,6 +60,10 @@ ALLOWED_UPLOAD_TYPES = {"http", "script", "llm_prompt", "mcp"}
 # 脚本运行时允许继承的最小环境变量（避免把 JWT_SECRET / DB 口令等泄露给第三方脚本）
 _SAFE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP",
                   "LANG", "LC_ALL", "COMSPEC", "PATHEXT", "HOME", "USERNAME")
+
+# mcp(stdio) 启动命令白名单：仅允许已知的安全启动器/解释器，
+# 禁止 cmd / powershell / bash / sh 等可直接执行任意 shell 的命令（审批即 RCE 风险）
+ALLOWED_MCP_COMMANDS = {"uvx", "npx", "python", "python3", "node", "docker", "deno"}
 
 
 # ── 内置技能（写死，run 调内部函数） ──────────────────────────────────────
@@ -155,6 +162,47 @@ def _atomic_write_text(path: str, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _is_ssrf_safe(url: str) -> tuple[bool, str]:
+    """校验出网 url 是否指向私网/环回/链路本地/云元数据等危险地址。
+
+    返回 (是否安全, 原因)。仅作为基础防护（DNS 仍可在校验后被重绑定），
+    生产环境须叠加网络层隔离（禁止平台出网或走代理白名单）。
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False, "url 解析失败"
+    if parsed.scheme not in ("http", "https"):
+        return False, "仅允许 http/https"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "缺少 host"
+    if host in ("localhost", "0.0.0.0", "::1") or host.endswith(".internal") or host.endswith(".local"):
+        return False, f"禁止访问内网主机: {host}"
+    # IP 字面量直接判
+    try:
+        ip = ipaddress.ip_address(host)
+        if not ip.is_global:
+            return False, f"禁止访问保留/私网地址: {host}"
+        return True, ""
+    except ValueError:
+        pass
+    # 域名：解析所有 A/AAAA，任一命中私网/保留地址即拒绝
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False, f"域名解析失败: {host}"
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if not ip.is_global:
+            return False, f"域名解析到私网地址: {addr}"
+    return True, ""
+
+
 def save_uploaded_skill(manifest: dict, script_bytes: bytes | None,
                         script_filename: str | None) -> dict:
     """落盘一个经前端上传的技能。
@@ -182,18 +230,31 @@ def save_uploaded_skill(manifest: dict, script_bytes: bytes | None,
         runner["file"] = base
 
     if rtype == "http":
-        if not (runner.get("endpoint") or "").startswith("https://"):
+        endpoint = runner.get("endpoint") or ""
+        if not endpoint.startswith("https://"):
             raise ValueError("http 类型技能需要 https endpoint")
+        ok, why = _is_ssrf_safe(endpoint)
+        if not ok:
+            raise ValueError(f"http endpoint 地址被拦截(SSRF防护): {why}")
 
     if rtype == "mcp":
         transport = (runner.get("transport") or "stdio").lower()
         if transport == "stdio":
-            if not runner.get("command"):
+            command = runner.get("command")
+            if not command:
                 raise ValueError("mcp(stdio) 需要 command")
+            cmd_base = os.path.basename(command)
+            cmd_stem = cmd_base[:-4] if cmd_base.lower().endswith(".exe") else cmd_base
+            if cmd_base not in ALLOWED_MCP_COMMANDS and cmd_stem not in ALLOWED_MCP_COMMANDS:
+                raise ValueError(
+                    f"mcp(stdio) 命令不在白名单（允许: {sorted(ALLOWED_MCP_COMMANDS)}）")
         elif transport == "sse":
             url = runner.get("url") or ""
             if not (url.startswith("http://") or url.startswith("https://")):
                 raise ValueError("mcp(sse) 需要 http(s) url")
+            ok, why = _is_ssrf_safe(url)
+            if not ok:
+                raise ValueError(f"mcp(sse) 地址被拦截(SSRF防护): {why}")
         else:
             raise ValueError(f"不支持的 mcp transport: {transport}")
         runner["transport"] = transport
@@ -229,6 +290,13 @@ def set_skill_approval(sid: str, approval: str) -> dict:
 
 def _strip_internal(skill: dict) -> dict:
     return {k: v for k, v in skill.items() if not k.startswith("_") and k != "writes"}
+
+
+def _sanitize_error(msg: str) -> str:
+    """脱敏：抹掉报错中的绝对路径，避免向调用方泄露服务器目录结构。"""
+    msg = re.sub(r"[A-Za-z]:\\[^\s\"']+", "<path>", msg)
+    msg = re.sub(r"/[^\s\"']*/[^\s\"']+", "<path>", msg)
+    return msg[:1000]
 
 
 @skills_bp.route("", methods=["GET"])
@@ -294,6 +362,16 @@ def upload_skill():
     # 内置 id 冲突检查
     if sid in _BUILTIN_HANDLERS:
         return jsonify({"error": "id 与内置技能冲突"}), 409
+    # 已审批技能禁止被覆盖（防覆写已上架技能 -> 翻 pending -> 诱管理员重批 = RCE）
+    _mp = _safe_join_skills_dir(f"{sid}.manifest.json")
+    if os.path.isfile(_mp):
+        try:
+            with open(_mp, "r", encoding="utf-8") as _fh:
+                _existing = json.load(_fh)
+            if _existing.get("approval") == "approved":
+                return jsonify({"error": "技能 id 已存在且已审批，禁止覆盖（请换一个 id）"}), 409
+        except Exception:
+            pass  # 坏文件不阻塞上传，交给 save 处理
 
     try:
         public = save_uploaded_skill(manifest, script_bytes, script_filename)
@@ -354,7 +432,10 @@ def run_skill(sid):
             return jsonify({"error": "llm_prompt runner 暂未启用", "id": sid}), 501
     except Exception as e:  # noqa: BLE001 - 技能失败不应 500 拖垮页面
         logger.exception("skill %s failed", sid)
-        return jsonify({"error": str(e), "skill": sid}), 500
+        is_admin = getattr(request, "current_user_role", "") == "admin"
+        if is_admin:
+            return jsonify({"error": _sanitize_error(str(e)), "skill": sid}), 500
+        return jsonify({"error": "技能执行失败，详情已记录到服务端日志", "skill": sid}), 500
     return jsonify({"error": "skill not runnable", "id": sid}), 400
 
 
@@ -365,6 +446,9 @@ def _run_http_runner(skill: dict) -> dict:
     endpoint = runner.get("endpoint")
     if not endpoint or not endpoint.startswith("https://"):
         raise ValueError("http runner 需要 https endpoint")
+    ok, why = _is_ssrf_safe(endpoint)
+    if not ok:
+        raise ValueError(f"出网地址被拦截(SSRF防护): {why}")
     method = (runner.get("method") or "POST").upper()
     timeout = int(runner.get("timeout", 10))
     payload = request.get_json(silent=True) or {}
@@ -472,6 +556,9 @@ def _run_mcp_runner(skill: dict) -> dict:
                 url = runner.get("url")
                 if not url:
                     raise ValueError("mcp(sse) 需要 url")
+                _ok, _why = _is_ssrf_safe(url)
+                if not _ok:
+                    raise ValueError(f"sse 地址被拦截(SSRF防护): {_why}")
                 read, write = await stack.enter_async_context(sse_client(url))
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
