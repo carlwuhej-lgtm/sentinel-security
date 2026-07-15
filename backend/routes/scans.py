@@ -419,6 +419,70 @@ def list_vulnerabilities():
     })
 
 
+@scans_bp.route("/vulnerabilities/groups", methods=["GET"])
+@login_required
+def group_vulnerabilities():
+    """GET /api/scans/vulnerabilities/groups — 按 (标题, 严重度, 来源工具) 聚合相同漏洞。
+
+    将同一条规则在多文件/多行触发的重复记录折叠成一组，每组带数量、状态分布、
+    受影响位置列表与代表性 ID，便于集中处置而非逐条查看。与 list 接口共用同一套筛选。
+    """
+    db = get_db()
+    where, params = _build_vuln_filters()
+    base_from = """FROM vulnerabilities v
+            LEFT JOIN scan_tasks s ON v.scan_id = s.id
+            LEFT JOIN projects p ON s.project_id = p.id"""
+    sql = f"""
+        SELECT
+            v.title AS title,
+            v.severity AS severity,
+            v.source_tool AS source_tool,
+            COUNT(*) AS cnt,
+            SUM(CASE WHEN v.status='open' THEN 1 ELSE 0 END) AS open_count,
+            SUM(CASE WHEN v.status='in_progress' THEN 1 ELSE 0 END) AS in_progress_count,
+            SUM(CASE WHEN v.status='fixed' THEN 1 ELSE 0 END) AS fixed_count,
+            SUM(CASE WHEN v.status='ignored' THEN 1 ELSE 0 END) AS ignored_count,
+            SUM(CASE WHEN v.sla_breached=1 AND v.status='open' THEN 1 ELSE 0 END) AS breached_count,
+            MIN(v.created_at) AS first_seen,
+            MAX(v.created_at) AS last_seen,
+            MIN(v.id) AS rep_id,
+            GROUP_CONCAT(v.id) AS ids,
+            GROUP_CONCAT(v.cve_id) AS cve_ids,
+            GROUP_CONCAT(v.id || '::' || COALESCE(v.file_path,'') || ':' || COALESCE(v.line,0), '|||') AS locations
+        {base_from}
+        {where}
+        GROUP BY v.title, v.severity, v.source_tool
+        ORDER BY cnt DESC, CASE LOWER(v.severity) WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END
+    """
+    rows = db.execute(sql, params).fetchall()
+    groups = []
+    for r in rows:
+        d = dict(r)
+        ids = [int(x) for x in (d.get("ids") or "").split(",") if x]
+        locs = [x for x in (d.get("locations") or "").split("|||") if x]
+        cve_ids = [x for x in (d.get("cve_ids") or "").split(",") if x]
+        groups.append({
+            "key": f"{d['title']}||{d['severity']}||{d['source_tool']}",
+            "title": d["title"],
+            "severity": d["severity"],
+            "source_tool": d["source_tool"] or "",
+            "count": d["cnt"] or 0,
+            "open_count": d["open_count"] or 0,
+            "in_progress_count": d["in_progress_count"] or 0,
+            "fixed_count": d["fixed_count"] or 0,
+            "ignored_count": d["ignored_count"] or 0,
+            "breached_count": d["breached_count"] or 0,
+            "first_seen": d["first_seen"],
+            "last_seen": d["last_seen"],
+            "rep_id": d["rep_id"],
+            "ids": ids,
+            "cve_id": cve_ids[0] if cve_ids else "",
+            "locations": locs,
+        })
+    db.close()
+    return jsonify({"groups": groups, "total_groups": len(groups)})
+
+
 @scans_bp.route("/vulnerabilities/stats", methods=["GET"])
 @login_required
 def vulnerabilities_stats():
@@ -561,6 +625,29 @@ def update_vulnerability(vid: int):
     result = dict(updated)
     result["sla_info"] = _calc_sla(result)
 
+    db.close()
+    return jsonify(result)
+
+
+@scans_bp.route("/vulnerabilities/<int:vid>", methods=["GET"])
+@login_required
+def get_vulnerability(vid: int):
+    """GET /api/scans/vulnerabilities/:id — 返回单条漏洞完整记录（供聚合视图点开具体位置）。"""
+    db = get_db()
+    row = db.execute(
+        """SELECT v.*, p.name AS project_name, u.name AS assignee_name
+           FROM vulnerabilities v
+           LEFT JOIN scan_tasks s ON v.scan_id = s.id
+           LEFT JOIN projects p ON s.project_id = p.id
+           LEFT JOIN users u ON v.assigned_to = u.id
+           WHERE v.id=?""",
+        (vid,)
+    ).fetchone()
+    if not row:
+        db.close()
+        return jsonify({"error": "漏洞不存在"}), 404
+    result = dict(row)
+    result["sla_info"] = _calc_sla(result)
     db.close()
     return jsonify(result)
 

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
-import { BookOpen, Search, TrendingUp, Clock, Plus, Tag, Folder, Eye, Lightbulb, ArrowRight, AlertTriangle } from 'lucide-react'
+import { BookOpen, Search, TrendingUp, Clock, Plus, Tag, Folder, Eye, Lightbulb, ArrowRight, AlertTriangle, Download, Upload } from 'lucide-react'
 
 interface Article {
   id: number
@@ -43,6 +43,11 @@ export default function KnowledgeBase() {
   const [popular, setPopular] = useState<Article[]>([])
   const [recent, setRecent] = useState<Article[]>([])
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const currentUser = (() => { try { return JSON.parse(localStorage.getItem('sentinel_user') || 'null') } catch { return null } })()
+  const isAdmin = currentUser?.role === 'admin'
 
   useEffect(() => {
     loadMeta()
@@ -99,6 +104,62 @@ export default function KnowledgeBase() {
     } catch { /* ignore */ }
   }
 
+  const handleExport = async (format: 'json' | 'csv') => {
+    try {
+      const token = localStorage.getItem('sentinel_token')
+      const res = await fetch(`/api/knowledge-base/export?format=${format}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        setImportMsg(`导出失败（${res.status}）`)
+        return
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const cd = res.headers.get('content-disposition') || ''
+      const m = cd.match(/filename=([^;]+)/)
+      a.download = m ? m[1].replace(/['"]/g, '') : `knowledge-base-export.${format}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      setImportMsg(`导出失败：${err?.message || '网络错误'}`)
+    }
+  }
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    setImportMsg('')
+    try {
+      const token = localStorage.getItem('sentinel_token')
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch('/api/knowledge-base/import', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setImportMsg(`导入失败（${res.status}）：${data?.message || '服务器错误'}`)
+      } else {
+        setImportMsg(`导入完成：新增 ${data?.imported ?? 0}，跳过 ${data?.skipped ?? 0}，失败 ${data?.errors ?? 0}`)
+        loadArticles()
+        loadMeta()
+      }
+    } catch (err: any) {
+      setImportMsg(`导入失败：${err?.message || '网络错误'}`)
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -113,11 +174,31 @@ export default function KnowledgeBase() {
           <h1 className="page-title">知识库</h1>
           <p className="page-subtitle">安全知识沉淀与复用，从漏洞修复指南到最佳实践</p>
         </div>
-        <button onClick={() => navigate('/knowledge-base/new')} className="btn-primary text-xs">
-          <Plus size={14} />
-          写文章
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => handleExport('json')} title="导出为 JSON" className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-700/50 text-slate-300 hover:text-primary-300 hover:border-primary-500/30 transition-colors bg-surface-800/40 flex items-center gap-1">
+            <Download size={14} /> JSON
+          </button>
+          <button onClick={() => handleExport('csv')} title="导出为 CSV" className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-700/50 text-slate-300 hover:text-primary-300 hover:border-primary-500/30 transition-colors bg-surface-800/40 flex items-center gap-1">
+            <Download size={14} /> CSV
+          </button>
+          {isAdmin && (
+            <button onClick={() => fileInputRef.current?.click()} disabled={importing} title="导入文章（仅管理员）" className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-700/50 text-slate-300 hover:text-primary-300 hover:border-primary-500/30 transition-colors bg-surface-800/40 flex items-center gap-1 disabled:opacity-50">
+              <Upload size={14} /> {importing ? '导入中…' : '导入'}
+            </button>
+          )}
+          <button onClick={() => navigate('/knowledge-base/new')} className="btn-primary text-xs flex items-center gap-1">
+            <Plus size={14} />
+            写文章
+          </button>
+          <input ref={fileInputRef} type="file" accept=".json,.csv" className="hidden" onChange={handleImportFile} />
+        </div>
       </div>
+
+      {importMsg && (
+        <div className={`text-xs px-3 py-2 rounded-lg border ${importMsg.includes('失败') ? 'border-red-500/30 text-red-400 bg-red-500/5' : 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5'}`}>
+          {importMsg}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* ── Sidebar ── */}

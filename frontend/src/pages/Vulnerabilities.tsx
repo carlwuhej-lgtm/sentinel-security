@@ -7,7 +7,7 @@ import {
   User, FileCode, Tag, Calendar, Bot, ChevronDown, ChevronUp, Copy, Check,
   Search, Crosshair, Code, Download, ShieldOff, Send, Key, Unlock,
   Repeat, EyeOff, GitBranch, TrendingUp, Target, BarChart3, Activity,
-  ArrowRight, Sparkles, Trash2, Ticket
+  ArrowRight, Sparkles, Trash2, Ticket, Layers, List, Boxes, ChevronsUp, ChevronsDown
 } from 'lucide-react'
 
 interface Vulnerability {
@@ -32,6 +32,25 @@ interface User {
   id: number
   name: string
   email: string
+}
+
+interface VulnGroup {
+  key: string
+  title: string
+  severity: string
+  source_tool: string
+  count: number
+  open_count: number
+  in_progress_count: number
+  fixed_count: number
+  ignored_count: number
+  breached_count: number
+  first_seen?: string
+  last_seen?: string
+  rep_id: number
+  ids: number[]
+  cve_id: string
+  locations: string[]
 }
 
 interface SlaInfo {
@@ -783,6 +802,212 @@ function VulnDrawer({
   )
 }
 
+// ─── 聚合（分组）视图 ───
+interface GroupedVulnerabilitiesProps {
+  groups: VulnGroup[]
+  groupsLoading: boolean
+  groupsTotal: number
+  loadError: string | null
+  expandedGroups: Set<string>
+  selectedIds: Set<number>
+  loadingVulnId: number | null
+  groupFixingKey: string | null
+  onRetry: () => void
+  onToggleExpand: (key: string) => void
+  onToggleSelect: (g: VulnGroup) => void
+  onGroupAllSelected: (g: VulnGroup) => boolean
+  onOpenVuln: (id: number) => void
+  onFixGroup: (g: VulnGroup) => void
+  onRefresh: () => void
+  onExpandAll: () => void
+  onCollapseAll: () => void
+  search: string
+}
+
+function parseLoc(loc: string): { id: number; path: string } {
+  const idx = loc.indexOf('::')
+  if (idx === -1) return { id: -1, path: loc }
+  return { id: Number(loc.slice(0, idx)), path: loc.slice(idx + 2) }
+}
+
+function StatusChip({ label, count, color }: { label: string; count: number; color: string }) {
+  if (count <= 0) return null
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${color}`}>
+      {label} {count}
+    </span>
+  )
+}
+
+function GroupedVulnerabilities(props: GroupedVulnerabilitiesProps) {
+  const {
+    groups, groupsLoading, groupsTotal, loadError, expandedGroups, selectedIds,
+    loadingVulnId, groupFixingKey, onRetry, onToggleExpand, onToggleSelect,
+    onGroupAllSelected,     onOpenVuln, onFixGroup, onRefresh, onExpandAll, onCollapseAll, search,
+  } = props
+
+  if (groupsLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="glass-card rounded-xl p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="skeleton w-12 h-5 rounded-full" />
+              <div className="skeleton flex-1 h-4" />
+              <div className="skeleton w-16 h-5 rounded-full" />
+            </div>
+            <div className="skeleton h-3 w-1/3" />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-icon"><Shield size={24} /></div>
+        <h3 className="empty-state-title">数据加载失败</h3>
+        <p className="empty-state-desc">{loadError}</p>
+        <button onClick={onRetry} className="px-3 py-1.5 rounded bg-surface-800 border border-slate-700 text-xs hover:border-slate-600 mt-3">重试</button>
+      </div>
+    )
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-icon"><Layers size={24} /></div>
+        <h3 className="empty-state-title">{search.trim() ? '未找到匹配的聚合漏洞' : '暂无漏洞数据'}</h3>
+        <p className="empty-state-desc">{search.trim() ? '尝试修改搜索关键词' : '执行扫描后，相同漏洞将按规则聚合显示在这里'}</p>
+      </div>
+    )
+  }
+
+  const totalVulns = groups.reduce((s, g) => s + g.count, 0)
+  const openGroups = groups.filter(g => g.open_count + g.in_progress_count > 0).length
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 text-xs text-slate-400">
+        <span>
+          共 <span className="text-white font-semibold">{groupsTotal}</span> 类聚合 ·
+          涉及 <span className="text-white font-semibold">{totalVulns}</span> 条漏洞 ·
+          待处置 <span className="text-orange-400 font-semibold">{openGroups}</span> 类
+        </span>
+        <button onClick={onRefresh} className="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1">
+          <RefreshCw size={12} /> 刷新
+        </button>
+        <button
+          onClick={expandedGroups.size >= groups.length ? onCollapseAll : onExpandAll}
+          className="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1"
+        >
+          {expandedGroups.size >= groups.length ? <ChevronsUp size={12} /> : <ChevronsDown size={12} />}
+          {expandedGroups.size >= groups.length ? '收起全部' : '展开全部'}
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {groups.map(g => {
+          const sev = severityStyle[g.severity?.toLowerCase()] || severityStyle.low
+          const expanded = expandedGroups.has(g.key)
+          const allSel = onGroupAllSelected(g)
+          const actionableOpen = g.open_count + g.in_progress_count
+          return (
+            <div key={g.key} className="glass-card rounded-xl border border-white/[0.06] overflow-hidden">
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <div className="pt-0.5" onClick={e => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={allSel}
+                    onChange={() => onToggleSelect(g)}
+                    className="checkbox"
+                    title={allSel ? '取消全选本组' : '全选本组'}
+                  />
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${sev.bg} ${sev.text} shrink-0 mt-0.5`}>
+                  {g.severity?.toUpperCase()}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm text-white truncate" title={g.title}>{g.title}</span>
+                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-primary-500/15 text-primary-300 border border-primary-500/20">
+                      ×{g.count}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    {g.cve_id && (
+                      <span className="text-[10px] font-mono text-slate-500 bg-surface-800/80 px-1.5 py-0.5 rounded border border-white/[0.05]">
+                        {g.cve_id}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-slate-500">{g.source_tool || '未知工具'}</span>
+                    <StatusChip label="待处理" count={g.open_count} color="bg-yellow-500/10 text-yellow-400 border-yellow-500/20" />
+                    <StatusChip label="处理中" count={g.in_progress_count} color="bg-blue-500/10 text-blue-400 border-blue-500/20" />
+                    <StatusChip label="已修复" count={g.fixed_count} color="bg-green-500/10 text-green-400 border-green-500/20" />
+                    <StatusChip label="已忽略" count={g.ignored_count} color="bg-slate-500/10 text-slate-400 border-slate-500/20" />
+                    {g.breached_count > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/20 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> 超时 {g.breached_count}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => onFixGroup(g)}
+                    disabled={groupFixingKey === g.key || actionableOpen === 0}
+                    className="btn-primary text-xs disabled:opacity-40"
+                    title={actionableOpen === 0 ? '本组均已处置' : `将本组 ${g.count} 条标记为已修复`}
+                  >
+                    {groupFixingKey === g.key ? '修复中...' : '批量修复'}
+                  </button>
+                  <button
+                    onClick={() => onToggleExpand(g.key)}
+                    className="btn-secondary text-xs flex items-center gap-1"
+                  >
+                    {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />} 位置
+                  </button>
+                </div>
+              </div>
+
+              {expanded && (
+                <div className="border-t border-white/[0.05] bg-surface-950/40 px-4 py-3">
+                  <div className="text-[10px] text-slate-500 mb-2">受影响位置（{g.locations.length}）</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-64 overflow-y-auto">
+                    {g.locations.slice(0, 60).map((loc, i) => {
+                      const { id, path } = parseLoc(loc)
+                      const isSel = id >= 0 && selectedIds.has(id)
+                      return (
+                        <button
+                          key={i}
+                          disabled={id < 0}
+                          onClick={() => id >= 0 && onOpenVuln(id)}
+                          className={`text-left text-[11px] font-mono rounded px-2 py-1 truncate transition-colors flex items-center gap-1.5 ${
+                            isSel ? 'bg-primary-500/10 text-primary-300' : 'text-slate-400 hover:text-primary-300 hover:bg-white/[0.03]'
+                          }`}
+                          title={id >= 0 ? '查看此位置漏洞详情' : ''}
+                        >
+                          <FileCode size={11} className="shrink-0 text-slate-600" />
+                          <span className="truncate">{path || '(无路径)'}</span>
+                          {loadingVulnId === id && <span className="text-[9px] text-primary-400 shrink-0">打开中…</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {g.locations.length > 60 && (
+                    <div className="text-[10px] text-slate-600 mt-2">仅显示前 60 个位置，本组共 {g.locations.length} 个</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Component ───
 export default function Vulnerabilities() {
   const navigate = useNavigate()
@@ -801,6 +1026,15 @@ export default function Vulnerabilities() {
   const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0, breached: 0, fixed: 0 })
   const [exporting, setExporting] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  // 聚合（分组）视图状态
+  const [viewMode, setViewMode] = useState<'list' | 'group'>('list')
+  const [groups, setGroups] = useState<VulnGroup[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsTotal, setGroupsTotal] = useState(0)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [loadingVulnId, setLoadingVulnId] = useState<number | null>(null)
+  const [groupFixingKey, setGroupFixingKey] = useState<string | null>(null)
 
   // 把当前 tab / 搜索映射为后端筛选参数
   const buildFilterParams = () => {
@@ -822,10 +1056,68 @@ export default function Vulnerabilities() {
 
   // 分页 / 筛选 / 搜索变化时重新拉取（搜索做 300ms 防抖）
   useEffect(() => {
-    const t = setTimeout(() => { loadVulnerabilities() }, search ? 300 : 0)
+    const t = setTimeout(() => {
+      if (viewMode === 'group') loadGroups()
+      else loadVulnerabilities()
+    }, search ? 300 : 0)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, activeTab, search])
+  }, [page, activeTab, search, viewMode])
+
+  const loadGroups = async () => {
+    setGroupsLoading(true)
+    try {
+      const res = await api.get('/scans/vulnerabilities/groups', { params: buildFilterParams() })
+      const data = res.data || {}
+      setGroups(data.groups || [])
+      setGroupsTotal(data.total_groups || 0)
+      setLoadError(null)
+    } catch (e: any) {
+      setGroups([]); setGroupsTotal(0)
+      setLoadError('漏洞聚合加载失败，请确认后端服务是否正常运行。')
+    } finally { setGroupsLoading(false) }
+  }
+
+  // 聚合视图下点开某个具体位置（某文件:行）：拉单条完整记录喂给抽屉
+  const openVulnById = async (id: number) => {
+    setLoadingVulnId(id)
+    try {
+      const res = await api.get(`/scans/vulnerabilities/${id}`)
+      setDrawerVuln(res.data)
+    } catch {
+      alert('打开漏洞详情失败')
+    } finally { setLoadingVulnId(null) }
+  }
+
+  const toggleGroupExpand = (key: string) => {
+    setExpandedGroups(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
+  const expandAllGroups = () => setExpandedGroups(new Set(groups.map(g => g.key)))
+  const collapseAllGroups = () => setExpandedGroups(new Set())
+  // 聚合视图内按严重度本地筛选（不重新请求，纯前端）
+  const [groupSevFilter, setGroupSevFilter] = useState<string>('all')
+  const visibleGroups = groupSevFilter === 'all'
+    ? groups
+    : groups.filter(g => g.severity?.toLowerCase() === groupSevFilter)
+  const groupAllSelected = (g: VulnGroup) => g.ids.length > 0 && g.ids.every(id => selectedIds.has(id))
+  const toggleGroupSelect = (g: VulnGroup) => {
+    setSelectedIds(prev => {
+      const n = new Set(prev)
+      if (groupAllSelected(g)) g.ids.forEach(id => n.delete(id))
+      else g.ids.forEach(id => n.add(id))
+      return n
+    })
+  }
+  const fixGroup = async (g: VulnGroup) => {
+    if (!confirm(`将整组「${g.title}」(${g.count} 条) 标记为已修复？`)) return
+    setGroupFixingKey(g.key)
+    try {
+      await api.post('/scans/vulnerabilities/batch-fix', { ids: g.ids })
+      loadGroups(); loadStats()
+    } catch {
+      alert('批量修复失败，请重试')
+    } finally { setGroupFixingKey(null) }
+  }
 
   const loadVulnerabilities = async () => {
     setLoading(true)
@@ -932,7 +1224,7 @@ export default function Vulnerabilities() {
     try {
       await api.post('/scans/vulnerabilities/batch-fix', { ids: Array.from(selectedIds) })
       setSelectedIds(new Set())
-      loadVulnerabilities()
+      if (viewMode === 'group') loadGroups(); else loadVulnerabilities()
       loadStats()
     } catch {}
   }
@@ -952,7 +1244,7 @@ export default function Vulnerabilities() {
     try {
       await api.post('/scans/vulnerabilities/batch-delete', { ids: Array.from(selectedIds) })
       setSelectedIds(new Set())
-      loadVulnerabilities()
+      if (viewMode === 'group') loadGroups(); else loadVulnerabilities()
       loadStats()
     } catch {}
   }
@@ -998,6 +1290,17 @@ export default function Vulnerabilities() {
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* 列表 / 聚合分组 切换 */}
+          <div className="flex items-center rounded-lg bg-surface-800/60 border border-white/[0.06] p-0.5 mr-1">
+            <button onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+              <List size={12} /> 列表
+            </button>
+            <button onClick={() => setViewMode('group')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'group' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+              <Layers size={12} /> 聚合
+            </button>
+          </div>
           {filterTabs.map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${activeTab === tab ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-surface-700'}`}>
@@ -1019,8 +1322,10 @@ export default function Vulnerabilities() {
         </div>
       </div>
 
-      {/* Table */}
-      {loading ? (
+      {/* Table (列表视图) */}
+      {viewMode === 'list' && (
+        <>
+        {loading ? (
         <div className="glass-card p-6 space-y-3">
           {[1, 2, 3, 4, 5].map(i => (
             <div key={i} className="flex gap-4 items-center">
@@ -1167,6 +1472,43 @@ export default function Vulnerabilities() {
               className="px-2 py-1 rounded bg-surface-800 border border-slate-700 disabled:opacity-30 hover:border-slate-600">下一页</button>
           </div>
         </div>
+      )}
+        </>
+      )}
+
+      {/* 聚合视图 */}
+      {viewMode === 'group' && (
+        <>
+          {/* 聚合视图内：严重度筛选 */}
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            {['all', 'critical', 'high', 'medium', 'low'].map(sev => (
+              <button key={sev} onClick={() => setGroupSevFilter(sev)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${groupSevFilter === sev ? 'bg-primary-600 text-white' : 'text-slate-400 bg-surface-800/60 border border-white/[0.06] hover:text-slate-200'}`}>
+                {sev === 'all' ? '全部严重度' : sev.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <GroupedVulnerabilities
+            groups={visibleGroups}
+            groupsLoading={groupsLoading}
+            groupsTotal={groupsTotal}
+            loadError={loadError}
+            expandedGroups={expandedGroups}
+            selectedIds={selectedIds}
+            loadingVulnId={loadingVulnId}
+            groupFixingKey={groupFixingKey}
+            onRetry={loadGroups}
+            onToggleExpand={toggleGroupExpand}
+            onToggleSelect={toggleGroupSelect}
+            onGroupAllSelected={groupAllSelected}
+            onOpenVuln={openVulnById}
+            onFixGroup={fixGroup}
+            onRefresh={() => { loadGroups(); loadStats() }}
+            onExpandAll={expandAllGroups}
+            onCollapseAll={collapseAllGroups}
+            search={search}
+          />
+        </>
       )}
 
       {/* Drawer */}

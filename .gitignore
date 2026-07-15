@@ -40,11 +40,17 @@ build/
 *.err
 logs/
 
+# 运行时生成（限流器持久化、sqlite WAL）
+ratelimit.db
+ratelimit.db-wal
+ratelimit.db-shm
+
 # 前端
 node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 .nuxt/
 .next/
 

@@ -34,6 +34,7 @@ import glob
 import json
 import asyncio
 import logging
+import threading
 import subprocess
 import urllib.request
 import socket
@@ -57,6 +58,12 @@ MAX_MANIFEST_BYTES = 64 * 1024        # manifest ≤ 64KB
 MAX_SCRIPT_BYTES = 256 * 1024         # 脚本 ≤ 256KB
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 ALLOWED_UPLOAD_TYPES = {"http", "script", "llm_prompt", "mcp"}
+
+# 运行并发控制（防止一次批量触发把服务打满）
+SKILL_MAX_CONCURRENCY = 4            # 同时最多 4 个技能在跑
+SKILL_RUN_SEM = threading.Semaphore(SKILL_MAX_CONCURRENCY)
+SKILL_ACQUIRE_TIMEOUT = 8            # 拿不到槽位则 8s 后放弃，返回 429
+SKILL_MAX_TIMEOUT = 120             # 单个技能硬超时上限（秒），防 manifest 声明超大超时
 # 脚本运行时允许继承的最小环境变量（避免把 JWT_SECRET / DB 口令等泄露给第三方脚本）
 _SAFE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP",
                   "LANG", "LC_ALL", "COMSPEC", "PATHEXT", "HOME", "USERNAME")
@@ -416,6 +423,12 @@ def run_skill(sid):
         return jsonify({"error": "skill not approved", "id": sid}), 403
 
     logger.info("skill run: %s by user=%s", sid, getattr(request, "current_user_id", None))
+    # 并发闸门：满槽位时短时等待，仍拿不到则拒绝，避免请求堆积拖垮服务
+    if not SKILL_RUN_SEM.acquire(timeout=SKILL_ACQUIRE_TIMEOUT):
+        return jsonify({
+            "error": "skill_runner_busy",
+            "message": f"技能执行队列已满（最多 {SKILL_MAX_CONCURRENCY} 个并发），请稍后重试",
+        }), 429
     try:
         handler = skill.get("_handler")
         if handler:
@@ -436,6 +449,8 @@ def run_skill(sid):
         if is_admin:
             return jsonify({"error": _sanitize_error(str(e)), "skill": sid}), 500
         return jsonify({"error": "技能执行失败，详情已记录到服务端日志", "skill": sid}), 500
+    finally:
+        SKILL_RUN_SEM.release()
     return jsonify({"error": "skill not runnable", "id": sid}), 400
 
 
@@ -480,7 +495,7 @@ def _run_script_runner(skill: dict) -> dict:
     path = _safe_join_skills_dir(fname)
     if not os.path.isfile(path):
         raise FileNotFoundError(f"skill 脚本不存在: {fname}")
-    timeout = int(runner.get("timeout", 15))
+    timeout = min(int(runner.get("timeout", 15)), SKILL_MAX_TIMEOUT)
     safe_env = {k: os.environ[k] for k in _SAFE_ENV_KEYS if k in os.environ}
     # 强制子进程 UTF-8 输出（Windows 默认 GBK 会导致中文解码失败/卡死）
     safe_env.setdefault("PYTHONUTF8", "1")

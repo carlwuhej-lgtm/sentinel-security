@@ -4,8 +4,8 @@
 /api/knowledge-base/*
 """
 
-from flask import Blueprint, request, jsonify
-import json, datetime
+from flask import Blueprint, request, jsonify, Response
+import json, datetime, io, csv, re
 
 knowledge_base_bp = Blueprint("knowledge_base", __name__)
 
@@ -565,5 +565,167 @@ def writing_recommendations():
             "total_uncovered": len(recommendations),
             "days": days,
         })
+    finally:
+        db.close()
+
+
+# ══════════════════════════════════════════════
+#  导出（备份 / 迁移）— JSON 或 CSV
+# ══════════════════════════════════════════════
+
+def _serialize_article(r) -> dict:
+    d = dict(r)
+    try:
+        d["tags"] = _parse_tags(d.get("tags"))
+    except (json.JSONDecodeError, TypeError):
+        d["tags"] = []
+    d["category_label"] = CATEGORIES.get(d.get("category"), d.get("category"))
+    author_id = d.get("author_id")
+    if author_id:
+        author = db_lookup_name(author_id)
+        d["author_name"] = author
+    else:
+        d["author_name"] = ""
+    return d
+
+
+def db_lookup_name(uid):
+    db = get_db()
+    try:
+        row = db.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()
+        return row["name"] if row else ""
+    finally:
+        db.close()
+
+
+@knowledge_base_bp.route("/export", methods=["GET"])
+@login_required
+def export_articles():
+    """导出全部已发布文章为 JSON（默认）或 CSV。用于备份与迁移。"""
+    fmt = (request.args.get("format") or "json").lower()
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT * FROM knowledge_articles WHERE is_published=1 ORDER BY id"
+        ).fetchall()
+        items = [_serialize_article(r) for r in rows]
+    finally:
+        db.close()
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["title", "category", "category_label", "tags",
+                         "summary", "content", "author_name", "view_count",
+                         "created_at", "updated_at"])
+        for it in items:
+            writer.writerow([
+                it.get("title", ""), it.get("category", ""), it.get("category_label", ""),
+                "|".join(it.get("tags", [])), it.get("summary", ""), it.get("content", ""),
+                it.get("author_name", ""), it.get("view_count", 0),
+                it.get("created_at", ""), it.get("updated_at", ""),
+            ])
+        data = buf.getvalue().encode("utf-8-sig")
+        return Response(
+            data, mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=knowledge-base-export.csv"},
+        )
+
+    # 默认 JSON
+    data = json.dumps(items, ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        data, mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=knowledge-base-export.json"},
+    )
+
+
+# ══════════════════════════════════════════════
+#  导入（恢复 / 迁移）— JSON 或 CSV，管理员
+# ══════════════════════════════════════════════
+
+@knowledge_base_bp.route("/import", methods=["POST"])
+@admin_required
+def import_articles():
+    """从 JSON 数组或 CSV 批量导入文章。标题重复（忽略大小写）则跳过。"""
+    db = get_db()
+    try:
+        records: list = []
+
+        # 1) 优先解析请求体 JSON 数组
+        body = request.get_json(silent=True)
+        if isinstance(body, list):
+            records = body
+        elif isinstance(body, dict) and isinstance(body.get("articles"), list):
+            records = body["articles"]
+
+        # 2) 否则尝试上传文件（.json / .csv）
+        if not records and "file" in request.files:
+            fh = request.files["file"]
+            raw = fh.read().decode("utf-8-sig", errors="replace")
+            if fh.filename and fh.filename.lower().endswith(".csv"):
+                reader = csv.DictReader(io.StringIO(raw))
+                for row in reader:
+                    records.append({
+                        "title": row.get("title", ""),
+                        "category": row.get("category", "general"),
+                        "tags": [t for t in (row.get("tags") or "").split("|") if t.strip()],
+                        "summary": row.get("summary", ""),
+                        "content": row.get("content", ""),
+                    })
+            else:
+                parsed = json.loads(raw)
+                records = parsed if isinstance(parsed, list) else parsed.get("articles", [])
+
+        if not isinstance(records, list) or not records:
+            return jsonify({"error": "未提供有效文章数据（JSON 数组或 CSV 文件）"}), 400
+
+        # 已有标题集合（忽略大小写）用于去重
+        existing = {
+            (r["title"] or "").strip().lower()
+            for r in db.execute("SELECT title FROM knowledge_articles").fetchall()
+        }
+
+        imported, skipped, errors = 0, 0, 0
+        for rec in records:
+            if not isinstance(rec, dict):
+                errors += 1
+                continue
+            title = (rec.get("title") or "").strip()
+            if not title:
+                errors += 1
+                continue
+            if title.lower() in existing:
+                skipped += 1
+                continue
+
+            content = rec.get("content", "")
+            category = rec.get("category", "general")
+            if category not in CATEGORIES:
+                category = "general"
+            tags = rec.get("tags", [])
+            if isinstance(tags, str):
+                tags = [t.strip() for t in tags.split("|") if t.strip()]
+            summary = (rec.get("summary") or "").strip()
+            if not summary and content:
+                plain = re.sub(r"[#*`\[\]\(\)!\-><|]", "", content)[:200]
+                summary = plain.strip()
+
+            db.execute(
+                """INSERT INTO knowledge_articles
+                   (title, content, category, tags, author_id, summary, is_published)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (title, content, category, json.dumps(tags, ensure_ascii=False),
+                 request.current_user_id, summary, 1),
+            )
+            existing.add(title.lower())
+            imported += 1
+
+        db.commit()
+        audit_log(
+            request.current_user_id, "",
+            "kb.import", "knowledge_article", 0,
+            f"导入知识库文章: 新增 {imported} / 跳过 {skipped} / 失败 {errors}",
+        )
+        return jsonify({"imported": imported, "skipped": skipped, "errors": errors})
     finally:
         db.close()

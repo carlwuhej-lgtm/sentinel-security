@@ -23,7 +23,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(na
 import os
 import sqlite3
 import sys
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g, Response
+import secrets as _secrets
+import re as _re
 
 # 确保 integrations 和 notifications 可导入
 sys.path.insert(0, os.path.dirname(__file__))
@@ -1118,7 +1120,20 @@ def _serve_frontend(app: Flask):
         full = os.path.join(FRONTEND_DIST, path)
         if path and os.path.isfile(full):
             return send_from_directory(FRONTEND_DIST, path)
-        # SPA fallback
-        return send_from_directory(FRONTEND_DIST, "index.html")
+        # SPA fallback：注入一次性 nonce 到 <script> 标签，配合 CSP 关闭 unsafe-inline
+        index_path = os.path.join(FRONTEND_DIST, "index.html")
+        nonce = _secrets.token_hex(16)
+        g.csp_nonce = nonce
+        try:
+            with open(index_path, "r", encoding="utf-8") as fh:
+                html = fh.read()
+            html = _re.sub(
+                r"(<script)(?=[\s>])",
+                lambda m: m.group(1) + f' nonce="{nonce}"',
+                html,
+            )
+            return Response(html, mimetype="text/html")
+        except OSError:
+            return send_from_directory(FRONTEND_DIST, "index.html")
 
     logger.info(f"[Sentinel] Serving frontend from {FRONTEND_DIST}")

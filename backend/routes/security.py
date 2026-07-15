@@ -11,7 +11,11 @@ Phase 1: API 安全中间件
 import time
 import functools
 import hashlib
-from collections import defaultdict
+import os
+import re
+import secrets
+import sqlite3
+import threading
 from flask import request, jsonify, g
 
 # ═══════════════════════════════════════════════════════
@@ -36,14 +40,62 @@ ACCOUNT_LOCK_SECONDS = 900  # 15 分钟
 MAX_REQUEST_BODY_KB = 5120  # 5MB
 
 # ═══════════════════════════════════════════════════════
-#  内存限流器 (生产环境应替换为 Redis)
+#  持久化限流器 (SQLite WAL 文件，重启/多 worker 不丢状态)
+#  表: rl_store(key, ip, ts) — key 区分全局限流/登录限流/登录锁定
 # ═══════════════════════════════════════════════════════
 
-# {ip: [(timestamp, endpoint), ...]}
-_request_log: dict[str, list] = defaultdict(list)
+_RL_DB = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ratelimit.db"))
+_rl_write_lock = threading.Lock()
+# 超过该时长的记录统一清理（覆盖所有限流窗口，含账户锁定 900s）
+RL_PRUNE_SECONDS = 3600
 
-# {ip: [fail_timestamp_1, fail_timestamp_2, ...]}
-_login_failures: dict[str, list] = defaultdict(list)
+
+def _rl_conn():
+    conn = sqlite3.connect(_RL_DB, timeout=5)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""CREATE TABLE IF NOT EXISTS rl_store (
+        key TEXT NOT NULL,
+        ip  TEXT NOT NULL,
+        ts  REAL NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rl_key_ip ON rl_store(key, ip)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rl_ts ON rl_store(ts)")
+    return conn
+
+
+def _rl_prune(conn):
+    """清理超过保留期的旧记录（不影响任何活跃窗口）。"""
+    cutoff = time.time() - RL_PRUNE_SECONDS
+    conn.execute("DELETE FROM rl_store WHERE ts < ?", (cutoff,))
+
+
+def _rl_count(key: str, ip: str, since_ts: float) -> int:
+    conn = _rl_conn()
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM rl_store WHERE key=? AND ip=? AND ts>=?",
+            (key, ip, since_ts),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _rl_insert(key: str, ip: str, ts: float) -> None:
+    conn = _rl_conn()
+    try:
+        conn.execute("INSERT INTO rl_store (key, ip, ts) VALUES (?,?,?)", (key, ip, ts))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _rl_delete(key: str, ip: str) -> None:
+    conn = _rl_conn()
+    try:
+        conn.execute("DELETE FROM rl_store WHERE key=? AND ip=?", (key, ip))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ═══════════════════════════════════════════════════════
@@ -115,58 +167,61 @@ def record_account_login_success(db, user_id: int) -> None:
     )
 
 
-def _cleanup_old_entries(log: list, window_seconds: int) -> None:
-    """清理窗口外的旧记录。"""
-    cutoff = time.time() - window_seconds
-    while log and log[0] < cutoff:
-        log.pop(0)
+def _check_rate_limit(ip: str, limit: int, window_seconds: int = 60, key: str = "global") -> bool:
+    """检查是否超过限流阈值。返回 True 表示允许，False 表示超限。
 
-
-def _check_rate_limit(ip: str, limit: int, window_seconds: int = 60) -> bool:
-    """检查是否超过限流阈值。返回 True 表示允许，False 表示超限。"""
-    entries = _request_log[ip]
-    _cleanup_old_entries(entries, window_seconds)
-    if len(entries) >= limit:
-        return False
-    entries.append(time.time())
-    return True
+    状态持久化到 SQLite（ratelimit.db），重启服务、多 worker 进程间共享。
+    """
+    now = time.time()
+    since = now - window_seconds
+    with _rl_write_lock:
+        conn = _rl_conn()
+        try:
+            _rl_prune(conn)
+            conn.commit()
+            if _rl_count(key, ip, since) >= limit:
+                return False
+            _rl_insert(key, ip, now)
+            return True
+        finally:
+            conn.close()
 
 
 def is_login_locked(ip: str) -> tuple[bool, int]:
     """
-    检查 IP 是否被登录锁定。
+    检查 IP 是否被登录锁定（持久化状态）。
     返回: (is_locked, remaining_seconds)
     """
-    failures = _login_failures[ip]
-    _cleanup_old_failures(failures)
-    if len(failures) >= LOGIN_FAIL_LOCK_COUNT:
-        # 计算最早一次失败后的剩余锁定时间
-        earliest = failures[0]
-        elapsed = time.time() - earliest
-        remaining = LOGIN_FAIL_LOCK_SECONDS - int(elapsed)
+    now = time.time()
+    since = now - LOGIN_FAIL_LOCK_SECONDS
+    count = _rl_count("login_fail", ip, since)
+    if count >= LOGIN_FAIL_LOCK_COUNT:
+        # 取最早一次失败时间计算剩余锁定
+        conn = _rl_conn()
+        try:
+            row = conn.execute(
+                "SELECT ts FROM rl_store WHERE key='login_fail' AND ip=? AND ts>=? ORDER BY ts ASC LIMIT 1",
+                (ip, since),
+            ).fetchone()
+        finally:
+            conn.close()
+        earliest = row[0] if row else now
+        remaining = LOGIN_FAIL_LOCK_SECONDS - int(now - earliest)
         if remaining > 0:
             return True, remaining
-        # 锁定时间已过，清除记录
-        failures.clear()
+        # 锁定已过期，清除该 IP 登录失败记录
+        _rl_delete("login_fail", ip)
     return False, 0
 
 
 def record_login_failure(ip: str) -> None:
-    """记录一次登录失败。"""
-    _login_failures[ip].append(time.time())
+    """记录一次登录失败（持久化）。"""
+    _rl_insert("login_fail", ip, time.time())
 
 
 def record_login_success(ip: str) -> None:
-    """登录成功后清除该 IP 的失败记录。"""
-    if ip in _login_failures:
-        del _login_failures[ip]
-
-
-def _cleanup_old_failures(failures: list) -> None:
-    """清理超出锁定窗口的失败记录。"""
-    cutoff = time.time() - LOGIN_FAIL_LOCK_SECONDS - 10  # 多留10秒余量
-    while failures and failures[0] < cutoff:
-        failures.pop(0)
+    """登录成功后清除该 IP 的失败记录（持久化）。"""
+    _rl_delete("login_fail", ip)
 
 
 # ═══════════════════════════════════════════════════════
@@ -174,14 +229,24 @@ def _cleanup_old_failures(failures: list) -> None:
 # ═══════════════════════════════════════════════════════
 
 def security_headers(response):
-    """after_request 钩子：注入安全响应头。"""
+    """after_request 钩子：注入安全响应头。
+
+    nonce 优先复用视图层（serve_frontend）写入 g.csp_nonce 的值，保证 HTML 里
+    <script nonce> 与 CSP 声明完全一致；无则现场生成。
+    script-src 已移除 'unsafe-inline'，仅靠 nonce 放行内联脚本，关闭 XSS 口子。
+    style-src 保留 'unsafe-inline'：React 通过 style 属性注入内联样式，该属性受
+    style-src 约束，去掉会导致整站样式失效；样式不可执行脚本，风险可接受。
+    HSTS 仅在 HTTPS 下被浏览器采纳，HTTP/localhost 会被忽略，不影响本地开发。
+    """
+    nonce = getattr(g, "csp_nonce", None) or secrets.token_hex(16)
+
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data:; "
         "font-src 'self' https://fonts.gstatic.com; "
@@ -190,9 +255,7 @@ def security_headers(response):
         "base-uri 'self'; "
         "form-action 'self'"
     )
-    # 开发环境不设 HSTS（避免 localhost 证书问题）
-    # 生产环境取消下面注释:
-    # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # 移除服务器指纹
     response.headers["Server"] = ""
     return response
@@ -231,8 +294,8 @@ def login_rate_limiter(f):
                 "message": f"登录失败次数过多，请 {remaining} 秒后重试",
             }), 429
 
-        # 检查登录频率限制
-        if not _check_rate_limit(ip, LOGIN_RATE_LIMIT, 60):
+        # 检查登录频率限制（独立于全局限流，key 区分）
+        if not _check_rate_limit(ip, LOGIN_RATE_LIMIT, 60, key="login_rate"):
             return jsonify({
                 "error": "rate_limit_exceeded",
                 "message": "登录请求过于频繁，请稍后重试",
